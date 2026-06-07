@@ -116,3 +116,30 @@
 **Duration:** 2026년 4월 ~ 2026년 5월  
 **Status:** ✅ 완료
 
+
+---
+
+## 📂 프로젝트 구조
+
+```
+src/
+├── adas_can.dbc         - ADAS 통신
+├── body_can.dbc         - 차체 통신
+├── chassis_can.dbc      - 섀시 통신
+├── infotainment_can.dbc - 인포테인먼트
+└── powertrain_can.dbc   - 파워트레인
+
+images/
+├── dashboard.png   - 대시보드
+└── esp_display.png - ESP 디스플레이
+```
+
+## 💻 DBC 파일
+
+5개 CAN 통신 메시지 정의:
+- **chassis_can.dbc** - 조향, 제동
+- **body_can.dbc** - 윈도우, 도어
+- **powertrain_can.dbc** - 엔진, 트랜스미션
+- **adas_can.dbc** - 센서, 카메라
+- **infotainment_can.dbc** - 오디오, 디스플레이
+

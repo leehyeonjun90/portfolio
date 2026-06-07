@@ -164,3 +164,33 @@ After (예지 보전):
 **Duration:** 2026년 5월 ~ 2026년 6월  
 **Status:** ✅ 완료
 
+
+---
+
+## 📂 프로젝트 구조
+
+```
+src/
+├── app.py              - Streamlit 메인 앱
+├── main.py             - 프로젝트 초기화
+├── model.py            - 오토인코더 & 로지스틱 회귀
+├── eda.py              - 탐색적 데이터 분석
+├── anomaly_detection.py - 이상 탐지 로직
+└── labeling.py         - 데이터 라벨링
+```
+
+## 💻 핵심 코드 설명
+
+### app.py (Streamlit 대시보드)
+- 메인 인터페이스 (다크 모드)
+- 페이지 라우팅 (Main, EDA, Anomaly Detection, Model)
+- 실시간 데이터 표시
+
+### model.py (머신러닝)
+- 오토인코더 (비지도 학습)
+- 로지스틱 회귀 (지도 학습)
+- MinMaxScaler 정규화
+
+### eda.py (데이터 분석)
+- DBSCAN, OPTICS, HDBSCAN 클러스터링
+- 데이터 분포 시각화

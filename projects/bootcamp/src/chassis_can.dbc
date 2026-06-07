@@ -1,0 +1,406 @@
+﻿VERSION "Chassis_CAN_v1.0"
+
+NS_ :
+  NS_DESC_
+  CM_
+  BA_DEF_
+  BA_
+  VAL_
+  CAT_DEF_
+  CAT_
+  FILTER
+  BA_DEF_DEF_
+  EV_DATA_
+  ENVVAR_DATA_
+  SGTYPE_
+  SGTYPE_VAL_
+  BA_DEF_SGTYPE_
+  BA_SGTYPE_
+  SIG_TYPE_REF_
+  VAL_TABLE_
+  SIG_GROUP_
+  SIG_VALTYPE_
+  SIGTYPE_VALTYPE_
+  BO_TX_BU_
+  BA_DEF_REL_
+  BA_REL_
+  BA_SGTYPE_REL_
+  SG_MUL_VAL_
+
+BS_:
+
+BU_: TEST_SCN VCU ESC MDPS ADAS CGW ABS EPB TPMS SAS VSM EHB ECS CDC ASM RWS CLU ACU ODS Vector__XXX
+
+BO_ 672 frmVehicleStateCanMsg: 2 VCU
+ SG_ gVehicleSpeed : 0|8@1+ (1,0) [0|255] "km/h" ESC,ADAS
+ SG_ gDriveState   : 8|2@1+ (1,0) [0|3]   ""     ESC,ADAS
+ SG_ Reserved0     : 10|6@1+ (1,0) [0|0]  ""     Vector__XXX
+
+BO_ 673 frmSteeringCanMsg: 1 TEST_SCN
+ SG_ SteeringInput : 0|1@1+ (1,0) [0|1] "" ESC,MDPS
+ SG_ Reserved0     : 1|7@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 674 frmPedalInputCanMsg: 2 TEST_SCN
+ SG_ AccelPedal       : 0|8@1+ (1,0) [0|100] "%" VCU
+ SG_ BrakePedal       : 8|8@1+ (1,0) [0|100] "%" ESC
+
+BO_ 256 frmSteeringStateCanMsg: 1 MDPS
+ SG_ SteeringState    : 0|2@1+ (1,0) [0|3] "" MDPS
+ SG_ Reserved0        : 2|6@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 257 frmWheelSpeedMsg: 4 ESC
+ SG_ WheelSpdFL       : 0|8@1+ (1,0) [0|255] "km/h" VCU,ESC,MDPS
+ SG_ WheelSpdFR       : 8|8@1+ (1,0) [0|255] "km/h" VCU,ESC,MDPS
+ SG_ WheelSpdRL       : 16|8@1+ (1,0) [0|255] "km/h" VCU,ESC,MDPS
+ SG_ WheelSpdRR       : 24|8@1+ (1,0) [0|255] "km/h" VCU,ESC,MDPS
+
+BO_ 258 frmYawAccelMsg: 4 ESC
+ SG_ YawRate          : 0|16@1+ (1,0) [0|65535] "deg/s" ESC,MDPS
+ SG_ LatAccel         : 16|16@1+ (1,0) [0|65535] "0.01m/s2" ESC,MDPS
+
+BO_ 288 frmBrakeStatusMsg: 2 ESC
+ SG_ BrakePressure    : 0|8@1+ (1,0) [0|255] "%" ESC
+ SG_ BrakeMode        : 8|2@1+ (1,0) [0|3] "" ESC
+ SG_ AbsActive        : 10|1@1+ (1,0) [0|1] "" ESC
+ SG_ EspActive        : 11|1@1+ (1,0) [0|1] "" ESC
+ SG_ Reserved0        : 12|4@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 289 frmAccelStatusMsg: 2 VCU
+ SG_ AccelRequest     : 0|8@1+ (1,0) [0|100] "%" ESC
+ SG_ TorqueRequest    : 8|8@1+ (1,0) [0|255] "Nm" ESC
+
+BO_ 290 frmSteeringTorqueMsg: 2 MDPS
+ SG_ SteeringTorque   : 0|12@1+ (1,0) [0|4095] "0.1Nm" ESC
+ SG_ SteeringAssistLv : 12|4@1+ (1,0) [0|15] "" ESC
+
+BO_ 259 frmChassisHealthMsg: 2 ESC
+ SG_ ChassisAliveCnt  : 0|8@1+ (1,0) [0|255] "" TEST_SCN,CGW
+ SG_ ChassisDiagState : 8|4@1+ (1,0) [0|15] "" TEST_SCN,CGW
+ SG_ ChassisFailCode  : 12|4@1+ (1,0) [0|15] "" TEST_SCN,CGW
+
+BO_ 291 frmEpsStateMsg: 2 MDPS
+ SG_ EpsAssistState   : 0|3@1+ (1,0) [0|7] "" ESC,ADAS
+ SG_ EpsFaultState    : 3|1@1+ (1,0) [0|1] "" ESC,ADAS
+ SG_ Reserved0        : 4|4@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ EpsTemp          : 8|8@1+ (1,0) [0|255] "degC" ESC,ADAS
+
+BO_ 292 frmAbsStateMsg: 2 ABS
+ SG_ AbsCtrlState     : 0|2@1+ (1,0) [0|3] "" ESC,ADAS
+ SG_ AbsSlipLevel     : 2|6@1+ (1,0) [0|63] "" ESC,ADAS
+ SG_ AbsPressureCmd   : 8|8@1+ (1,0) [0|255] "" ESC,ADAS
+
+BO_ 293 frmEscStateMsg: 2 ESC
+ SG_ EscCtrlState     : 0|2@1+ (1,0) [0|3] "" ESC,ADAS
+ SG_ EscIntervention  : 2|6@1+ (1,0) [0|63] "" ESC,ADAS
+ SG_ EscYawTarget     : 8|8@1+ (1,0) [0|255] "" ESC,ADAS
+
+BO_ 294 frmTcsStateMsg: 2 VCU
+ SG_ TcsCtrlState     : 0|2@1+ (1,0) [0|3] "" ESC,ADAS
+ SG_ TcsTorqueCut     : 2|6@1+ (1,0) [0|63] "" ESC,ADAS
+ SG_ TcsSlipRatio     : 8|8@1+ (1,0) [0|255] "" ESC,ADAS
+
+BO_ 295 frmBrakeTempMsg: 2 ESC
+ SG_ BrakeTempFL      : 0|8@1+ (1,0) [0|255] "degC" ESC,ADAS
+ SG_ BrakeTempFR      : 8|8@1+ (1,0) [0|255] "degC" ESC,ADAS
+
+BO_ 296 frmSteeringAngleMsg: 2 SAS
+ SG_ SteeringAngleRaw : 0|16@1+ (1,0) [0|65535] "0.1deg" ESC,ADAS
+
+BO_ 260 frmWheelPulseMsg: 2 VCU
+ SG_ WheelPulseFront  : 0|8@1+ (1,0) [0|255] "" ADAS
+ SG_ WheelPulseRear   : 8|8@1+ (1,0) [0|255] "" ADAS
+
+BO_ 261 frmSuspensionStateMsg: 2 ESC
+ SG_ SuspensionMode   : 0|3@1+ (1,0) [0|7] "" ADAS
+ SG_ SuspensionLevel  : 3|5@1+ (1,0) [0|31] "" ADAS
+ SG_ DampingLevel     : 8|8@1+ (1,0) [0|255] "" ADAS
+
+BO_ 262 frmTirePressureMsg: 4 TPMS
+ SG_ TirePressFL      : 0|8@1+ (1,0) [0|255] "kPa" ADAS
+ SG_ TirePressFR      : 8|8@1+ (1,0) [0|255] "kPa" ADAS
+ SG_ TirePressRL      : 16|8@1+ (1,0) [0|255] "kPa" ADAS
+ SG_ TirePressRR      : 24|8@1+ (1,0) [0|255] "kPa" ADAS
+
+BO_ 298 frmEpbStateMsg: 2 EPB
+ SG_ EpbState         : 0|2@1+ (1,0) [0|3] "" CLU,TEST_SCN
+ SG_ EpbWarnLevel     : 2|2@1+ (1,0) [0|3] "" CLU,TEST_SCN
+ SG_ Reserved0        : 4|4@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ EpbHoldForce     : 8|8@1+ (1,0) [0|255] "%" CLU,TEST_SCN
+
+BO_ 299 frmVsmStateMsg: 2 VSM
+ SG_ VsmCtrlState     : 0|3@1+ (1,0) [0|7] "" ADAS
+ SG_ VsmAlertLevel    : 3|3@1+ (1,0) [0|7] "" ADAS
+ SG_ VsmIntervention  : 8|8@1+ (1,0) [0|255] "" ADAS
+
+BO_ 300 frmEhbStateMsg: 2 EHB
+ SG_ EhbCtrlState     : 0|3@1+ (1,0) [0|7] "" ADAS
+ SG_ EhbPressureCmd   : 8|8@1+ (1,0) [0|255] "%" ADAS
+
+BO_ 301 frmEcsStateMsg: 2 ECS
+ SG_ EcsMode          : 0|3@1+ (1,0) [0|7] "" ADAS
+ SG_ EcsHeightLevel   : 3|5@1+ (1,0) [0|31] "" ADAS
+ SG_ EcsDampingLevel  : 8|8@1+ (1,0) [0|255] "" ADAS
+
+BO_ 302 frmCdcStateMsg: 2 CDC
+ SG_ CdcMode          : 0|3@1+ (1,0) [0|7] "" ADAS
+ SG_ CdcValveCurrent  : 8|8@1+ (1,0) [0|255] "" ADAS
+
+BO_ 303 frmAirSuspensionStateMsg: 3 ASM
+ SG_ RideHeightMode   : 0|3@1+ (1,0) [0|7] "" ESC,ADAS
+ SG_ FrontHeight      : 8|8@1+ (1,0) [0|255] "mm" ESC,ADAS
+ SG_ RearHeight       : 16|8@1+ (1,0) [0|255] "mm" ESC,ADAS
+
+BO_ 304 frmRwsStateMsg: 3 RWS
+ SG_ RwsMode          : 0|3@1+ (1,0) [0|7] "" ESC,ADAS
+ SG_ RwsState         : 3|2@1+ (1,0) [0|3] "" ESC,ADAS
+ SG_ RearSteerAngle   : 8|8@1+ (1,0) [0|255] "0.1deg" ESC,ADAS
+
+BO_ 676 frmChassisDiagReqMsg: 3 TEST_SCN
+ SG_ ChsDiagServiceId : 0|8@1+ (1,0) [0|255] "" ESC
+ SG_ ChsDiagDidHigh   : 8|8@1+ (1,0) [0|255] "" ESC
+ SG_ ChsDiagDidLow    : 16|8@1+ (1,0) [0|255] "" ESC
+
+BO_ 263 frmChassisDiagResMsg: 3 ESC
+ SG_ ChsDiagRespCode  : 0|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ ChsDiagData0     : 8|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ ChsDiagData1     : 16|8@1+ (1,0) [0|255] "" TEST_SCN
+
+BO_ 297 frmBrakeWearMsg: 1 ESC
+ SG_ BrakePadWearLvl  : 0|8@1+ (1,0) [0|255] "%" ESC
+
+BO_ 264 frmRoadFrictionMsg: 1 ESC
+ SG_ RoadFrictionCoef : 0|8@1+ (1,0) [0|255] "0.01" ADAS
+
+BO_ 700 frmAbsDiagReqMsg: 3 TEST_SCN
+ SG_ AbsDiagServiceId : 0|8@1+ (1,0) [0|255] "" ABS
+ SG_ AbsDiagDidHigh   : 8|8@1+ (1,0) [0|255] "" ABS
+ SG_ AbsDiagDidLow    : 16|8@1+ (1,0) [0|255] "" ABS
+
+BO_ 701 frmAbsDiagResMsg: 3 ABS
+ SG_ AbsDiagRespCode : 0|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ AbsDiagData0    : 8|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ AbsDiagData1    : 16|8@1+ (1,0) [0|255] "" TEST_SCN
+
+BO_ 702 frmEpbDiagReqMsg: 3 TEST_SCN
+ SG_ EpbDiagServiceId : 0|8@1+ (1,0) [0|255] "" EPB
+ SG_ EpbDiagDidHigh   : 8|8@1+ (1,0) [0|255] "" EPB
+ SG_ EpbDiagDidLow    : 16|8@1+ (1,0) [0|255] "" EPB
+
+BO_ 703 frmEpbDiagResMsg: 3 EPB
+ SG_ EpbDiagRespCode : 0|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ EpbDiagData0    : 8|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ EpbDiagData1    : 16|8@1+ (1,0) [0|255] "" TEST_SCN
+
+BO_ 704 frmTpmsDiagReqMsg: 3 TEST_SCN
+ SG_ TpmsDiagServiceId : 0|8@1+ (1,0) [0|255] "" TPMS
+ SG_ TpmsDiagDidHigh   : 8|8@1+ (1,0) [0|255] "" TPMS
+ SG_ TpmsDiagDidLow    : 16|8@1+ (1,0) [0|255] "" TPMS
+
+BO_ 705 frmTpmsDiagResMsg: 3 TPMS
+ SG_ TpmsDiagRespCode : 0|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ TpmsDiagData0    : 8|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ TpmsDiagData1    : 16|8@1+ (1,0) [0|255] "" TEST_SCN
+
+BO_ 706 frmSasDiagReqMsg: 3 TEST_SCN
+ SG_ SasDiagServiceId : 0|8@1+ (1,0) [0|255] "" SAS
+ SG_ SasDiagDidHigh   : 8|8@1+ (1,0) [0|255] "" SAS
+ SG_ SasDiagDidLow    : 16|8@1+ (1,0) [0|255] "" SAS
+
+BO_ 707 frmSasDiagResMsg: 3 SAS
+ SG_ SasDiagRespCode : 0|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ SasDiagData0    : 8|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ SasDiagData1    : 16|8@1+ (1,0) [0|255] "" TEST_SCN
+
+BO_ 708 frmVsmDiagReqMsg: 3 TEST_SCN
+ SG_ VsmDiagServiceId : 0|8@1+ (1,0) [0|255] "" VSM
+ SG_ VsmDiagDidHigh   : 8|8@1+ (1,0) [0|255] "" VSM
+ SG_ VsmDiagDidLow    : 16|8@1+ (1,0) [0|255] "" VSM
+
+BO_ 709 frmVsmDiagResMsg: 3 VSM
+ SG_ VsmDiagRespCode : 0|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ VsmDiagData0    : 8|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ VsmDiagData1    : 16|8@1+ (1,0) [0|255] "" TEST_SCN
+
+BO_ 710 frmEhbDiagReqMsg: 3 TEST_SCN
+ SG_ EhbDiagServiceId : 0|8@1+ (1,0) [0|255] "" EHB
+ SG_ EhbDiagDidHigh   : 8|8@1+ (1,0) [0|255] "" EHB
+ SG_ EhbDiagDidLow    : 16|8@1+ (1,0) [0|255] "" EHB
+
+BO_ 711 frmEhbDiagResMsg: 3 EHB
+ SG_ EhbDiagRespCode : 0|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ EhbDiagData0    : 8|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ EhbDiagData1    : 16|8@1+ (1,0) [0|255] "" TEST_SCN
+
+BO_ 712 frmEcsDiagReqMsg: 3 TEST_SCN
+ SG_ EcsDiagServiceId : 0|8@1+ (1,0) [0|255] "" ECS
+ SG_ EcsDiagDidHigh   : 8|8@1+ (1,0) [0|255] "" ECS
+ SG_ EcsDiagDidLow    : 16|8@1+ (1,0) [0|255] "" ECS
+
+BO_ 713 frmEcsDiagResMsg: 3 ECS
+ SG_ EcsDiagRespCode : 0|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ EcsDiagData0    : 8|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ EcsDiagData1    : 16|8@1+ (1,0) [0|255] "" TEST_SCN
+
+BO_ 714 frmCdcDiagReqMsg: 3 TEST_SCN
+ SG_ CdcDiagServiceId : 0|8@1+ (1,0) [0|255] "" CDC
+ SG_ CdcDiagDidHigh   : 8|8@1+ (1,0) [0|255] "" CDC
+ SG_ CdcDiagDidLow    : 16|8@1+ (1,0) [0|255] "" CDC
+
+BO_ 715 frmCdcDiagResMsg: 3 CDC
+ SG_ CdcDiagRespCode : 0|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ CdcDiagData0    : 8|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ CdcDiagData1    : 16|8@1+ (1,0) [0|255] "" TEST_SCN
+
+BO_ 716 frmAcuDiagReqMsg: 3 TEST_SCN
+ SG_ AcuDiagServiceId : 0|8@1+ (1,0) [0|255] "" ACU
+ SG_ AcuDiagDidHigh   : 8|8@1+ (1,0) [0|255] "" ACU
+ SG_ AcuDiagDidLow    : 16|8@1+ (1,0) [0|255] "" ACU
+
+BO_ 717 frmAcuDiagResMsg: 3 ACU
+ SG_ AcuDiagRespCode : 0|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ AcuDiagData0    : 8|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ AcuDiagData1    : 16|8@1+ (1,0) [0|255] "" TEST_SCN
+
+BO_ 718 frmOdsDiagReqMsg: 3 TEST_SCN
+ SG_ OdsDiagServiceId : 0|8@1+ (1,0) [0|255] "" ODS
+ SG_ OdsDiagDidHigh   : 8|8@1+ (1,0) [0|255] "" ODS
+ SG_ OdsDiagDidLow    : 16|8@1+ (1,0) [0|255] "" ODS
+
+BO_ 719 frmOdsDiagResMsg: 3 ODS
+ SG_ OdsDiagRespCode : 0|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ OdsDiagData0    : 8|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ OdsDiagData1    : 16|8@1+ (1,0) [0|255] "" TEST_SCN
+
+CM_ BO_ 672 "Flow_001 core vehicle state input.";
+CM_ BO_ 673 "Flow_002 steering input.";
+CM_ BO_ 674 "Chassis baseline: acceleration pedal and brake pedal input.";
+CM_ BO_ 256 "Chassis baseline: steering state produced from normalized steering input.";
+CM_ BO_ 257 "Chassis baseline: per-wheel speed distribution.";
+CM_ BO_ 258 "Chassis baseline: yaw rate and lateral acceleration.";
+CM_ BO_ 288 "Chassis baseline: brake pressure and ESC/ABS status.";
+CM_ BO_ 289 "Chassis baseline: acceleration request and torque request.";
+CM_ BO_ 290 "Chassis baseline: steering torque and assist level.";
+CM_ BO_ 259 "Chassis health/diagnostic state.";
+CM_ BO_ 291 "Comm_201: MDPS state extension.";
+CM_ BO_ 292 "Comm_201: ABS state extension.";
+CM_ BO_ 293 "Comm_201: ESC state extension.";
+CM_ BO_ 294 "Comm_201: TCS state extension.";
+CM_ BO_ 295 "Comm_201: brake thermal state.";
+CM_ BO_ 296 "Comm_201: steering angle extension.";
+CM_ BO_ 260 "Comm_201: wheel pulse extension.";
+CM_ BO_ 261 "Comm_201: suspension state extension.";
+CM_ BO_ 262 "Comm_201: tire pressure extension.";
+CM_ BO_ 298 "Comm_201: electronic parking brake state extension.";
+CM_ BO_ 676 "Comm_201: chassis diagnostic request.";
+CM_ BO_ 263 "Comm_201: chassis diagnostic response.";
+CM_ BO_ 297 "Comm_201: brake wear extension.";
+CM_ BO_ 264 "Comm_201: road friction extension.";
+CM_ BO_ 299 "Comm_201: vehicle stability management state extension.";
+CM_ BO_ 300 "Comm_201: electro-hydraulic brake state extension.";
+CM_ BO_ 301 "Comm_201: electronic control suspension state extension.";
+CM_ BO_ 302 "Comm_201: continuous damping control state extension.";
+CM_ BO_ 303 "Comm_201: air suspension ride-height extension.";
+CM_ BO_ 304 "Comm_201: rear-wheel steering extension.";
+CM_ BO_ 700 "Diagnostic request for ABS runtime.";
+CM_ BO_ 701 "Diagnostic response from ABS runtime.";
+CM_ BO_ 702 "Diagnostic request for EPB runtime.";
+CM_ BO_ 703 "Diagnostic response from EPB runtime.";
+CM_ BO_ 704 "Diagnostic request for TPMS runtime.";
+CM_ BO_ 705 "Diagnostic response from TPMS runtime.";
+CM_ BO_ 706 "Diagnostic request for SAS runtime.";
+CM_ BO_ 707 "Diagnostic response from SAS runtime.";
+CM_ BO_ 708 "Diagnostic request for VSM runtime.";
+CM_ BO_ 709 "Diagnostic response from VSM runtime.";
+CM_ BO_ 710 "Diagnostic request for EHB runtime.";
+CM_ BO_ 711 "Diagnostic response from EHB runtime.";
+CM_ BO_ 712 "Diagnostic request for ECS runtime.";
+CM_ BO_ 713 "Diagnostic response from ECS runtime.";
+CM_ BO_ 714 "Diagnostic request for CDC runtime.";
+CM_ BO_ 715 "Diagnostic response from CDC runtime.";
+CM_ BO_ 716 "Diagnostic request for ACU runtime.";
+CM_ BO_ 717 "Diagnostic response from ACU runtime.";
+CM_ BO_ 718 "Diagnostic request for ODS runtime.";
+CM_ BO_ 719 "Diagnostic response from ODS runtime.";
+BA_DEF_ BO_ "GenMsgCycleTime" INT 0 10000;
+BA_DEF_DEF_ "GenMsgCycleTime" 0;
+BA_ "GenMsgCycleTime" BO_ 672 100;
+BA_ "GenMsgCycleTime" BO_ 673 100;
+BA_ "GenMsgCycleTime" BO_ 674 100;
+BA_ "GenMsgCycleTime" BO_ 256 100;
+BA_ "GenMsgCycleTime" BO_ 257 100;
+BA_ "GenMsgCycleTime" BO_ 258 100;
+BA_ "GenMsgCycleTime" BO_ 288 100;
+BA_ "GenMsgCycleTime" BO_ 289 100;
+BA_ "GenMsgCycleTime" BO_ 290 100;
+BA_ "GenMsgCycleTime" BO_ 259 100;
+BA_ "GenMsgCycleTime" BO_ 291 100;
+BA_ "GenMsgCycleTime" BO_ 292 100;
+BA_ "GenMsgCycleTime" BO_ 293 100;
+BA_ "GenMsgCycleTime" BO_ 294 100;
+BA_ "GenMsgCycleTime" BO_ 295 100;
+BA_ "GenMsgCycleTime" BO_ 296 100;
+BA_ "GenMsgCycleTime" BO_ 260 100;
+BA_ "GenMsgCycleTime" BO_ 261 100;
+BA_ "GenMsgCycleTime" BO_ 262 100;
+BA_ "GenMsgCycleTime" BO_ 298 100;
+BA_ "GenMsgCycleTime" BO_ 676 0;
+BA_ "GenMsgCycleTime" BO_ 263 0;
+BA_ "GenMsgCycleTime" BO_ 297 100;
+BA_ "GenMsgCycleTime" BO_ 264 100;
+BA_ "GenMsgCycleTime" BO_ 299 100;
+BA_ "GenMsgCycleTime" BO_ 300 100;
+BA_ "GenMsgCycleTime" BO_ 301 100;
+BA_ "GenMsgCycleTime" BO_ 302 100;
+BA_ "GenMsgCycleTime" BO_ 303 100;
+BA_ "GenMsgCycleTime" BO_ 304 100;
+BA_ "GenMsgCycleTime" BO_ 700 0;
+BA_ "GenMsgCycleTime" BO_ 701 0;
+BA_ "GenMsgCycleTime" BO_ 702 0;
+BA_ "GenMsgCycleTime" BO_ 703 0;
+BA_ "GenMsgCycleTime" BO_ 704 0;
+BA_ "GenMsgCycleTime" BO_ 705 0;
+BA_ "GenMsgCycleTime" BO_ 706 0;
+BA_ "GenMsgCycleTime" BO_ 707 0;
+BA_ "GenMsgCycleTime" BO_ 708 0;
+BA_ "GenMsgCycleTime" BO_ 709 0;
+BA_ "GenMsgCycleTime" BO_ 710 0;
+BA_ "GenMsgCycleTime" BO_ 711 0;
+BA_ "GenMsgCycleTime" BO_ 712 0;
+BA_ "GenMsgCycleTime" BO_ 713 0;
+BA_ "GenMsgCycleTime" BO_ 714 0;
+BA_ "GenMsgCycleTime" BO_ 715 0;
+BA_ "GenMsgCycleTime" BO_ 716 0;
+BA_ "GenMsgCycleTime" BO_ 717 0;
+BA_ "GenMsgCycleTime" BO_ 718 0;
+BA_ "GenMsgCycleTime" BO_ 719 0;
+
+VAL_ 672 gDriveState
+  0 "P"
+  1 "R"
+  2 "N"
+  3 "D" ;
+
+VAL_ 673 SteeringInput
+  0 "NoInput"
+  1 "Input" ;
+
+
+VAL_ 256 SteeringState
+  0 "Stable"
+  1 "LeftTurn"
+  2 "RightTurn"
+  3 "Fault" ;
+
+VAL_ 288 BrakeMode
+  0 "Normal"
+  1 "Assist"
+  2 "Emergency"
+  3 "Fault" ;
+
+VAL_ 288 AbsActive
+  0 "Inactive"
+  1 "Active" ;
+
+VAL_ 288 EspActive
+  0 "Inactive"
+  1 "Active" ;

@@ -137,3 +137,25 @@ Step 3: 전원 공급 확인 ⚡ ← 발견!
 **Award:** 🏆 캡스톤 디자인 경진대회 우수상  
 **Status:** ✅ 완료
 
+
+---
+
+## 📂 프로젝트 구조
+
+```
+src/
+├── yolo_v1.ino   - Arduino 제어 (기본)
+├── yolo_v2.ino   - Arduino 제어 (센서 통합)
+└── yolo_v3.ino   - Arduino 제어 (LCD)
+
+images/
+├── manufacturing_01.jpg  - 제작 과정
+└── final_result.png      - 최종 결과
+```
+
+## 💻 Arduino 코드 진화
+
+**V1**: 기본 모터 제어
+**V2**: 센서 통합 + 상태 머신
+**V3**: LCD 디스플레이 + 실시간 카운팅
+

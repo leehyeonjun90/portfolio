@@ -1,0 +1,349 @@
+﻿VERSION "Powertrain_CAN_v1.0"
+
+NS_ :
+  NS_DESC_
+  CM_
+  BA_DEF_
+  BA_
+  VAL_
+  CAT_DEF_
+  CAT_
+  FILTER
+  BA_DEF_DEF_
+  EV_DATA_
+  ENVVAR_DATA_
+  SGTYPE_
+  SGTYPE_VAL_
+  BA_DEF_SGTYPE_
+  BA_SGTYPE_
+  SIG_TYPE_REF_
+  VAL_TABLE_
+  SIG_GROUP_
+  SIG_VALTYPE_
+  SIGTYPE_VALTYPE_
+  BO_TX_BU_
+  BA_DEF_REL_
+  BA_REL_
+  BA_SGTYPE_REL_
+  SG_MUL_VAL_
+
+BS_:
+
+BU_: TEST_SCN EMS TCU VCU SCC OBC DCDC MCU INVERTER _4WD BAT_BMS FPCM LVR ISG EOP EWP CPC Vector__XXX
+
+BO_ 680 frmIgnitionEngineMsg: 1 TEST_SCN
+ SG_ IgnitionState  : 0|1@1+ (1,0) [0|1] "" EMS
+ SG_ EngineState    : 1|2@1+ (1,0) [0|3] "" EMS
+ SG_ Reserved0      : 3|5@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 681 frmGearStateMsg: 1 TEST_SCN
+ SG_ GearInput      : 0|3@1+ (1,0) [0|7] "" TCU
+ SG_ GearState      : 3|3@1+ (1,0) [0|7] "" TCU
+ SG_ Reserved0      : 6|2@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 265 frmPowertrainGatewayMsg: 2 VCU
+ SG_ RoutingPolicy  : 0|8@1+ (1,0) [0|255] "" EMS,TCU
+ SG_ BoundaryStatus : 8|8@1+ (1,0) [0|255] "" EMS,TCU
+
+BO_ 298 frmEngineSpeedTempMsg: 4 EMS
+ SG_ EngineRpm       : 0|16@1+ (1,0) [0|65535] "rpm" TCU,VCU
+ SG_ CoolantTemp     : 16|8@1+ (1,0) [0|255] "degC" TCU,VCU
+ SG_ OilTemp         : 24|8@1+ (1,0) [0|255] "degC" TCU,VCU
+
+BO_ 299 frmFuelBatteryStateMsg: 3 EMS
+ SG_ FuelLevel       : 0|8@1+ (1,0) [0|100] "%" VCU
+ SG_ BatterySoc      : 8|8@1+ (1,0) [0|100] "%" VCU
+ SG_ ChargingState   : 16|2@1+ (1,0) [0|3] "" VCU
+ SG_ Reserved0       : 18|6@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 300 frmThrottleStateMsg: 2 EMS
+ SG_ ThrottlePos     : 0|8@1+ (1,0) [0|100] "%" TCU,VCU
+ SG_ ThrottleReq     : 8|8@1+ (1,0) [0|100] "%" TCU,VCU
+
+BO_ 301 frmTransmissionTempMsg: 2 TCU
+ SG_ TransOilTemp    : 0|8@1+ (1,0) [0|255] "degC" EMS,VCU
+ SG_ ClutchTemp      : 8|8@1+ (1,0) [0|255] "degC" EMS,VCU
+
+BO_ 266 frmVehicleModeMsg: 2 VCU
+ SG_ DriveMode       : 0|3@1+ (1,0) [0|7] "" EMS,TCU
+ SG_ EcoMode         : 3|1@1+ (1,0) [0|1] "" EMS,TCU
+ SG_ SportMode       : 4|1@1+ (1,0) [0|1] "" EMS,TCU
+ SG_ SnowMode        : 5|1@1+ (1,0) [0|1] "" EMS,TCU
+ SG_ Reserved0       : 6|2@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ PowertrainState : 8|8@1+ (1,0) [0|255] "" EMS,TCU
+
+BO_ 267 frmPowerLimitMsg: 2 VCU
+ SG_ TorqueLimit     : 0|8@1+ (1,0) [0|255] "Nm" EMS,TCU
+ SG_ SpeedLimit      : 8|8@1+ (1,0) [0|255] "km/h" EMS,TCU
+
+BO_ 268 frmCruiseStateMsg: 2 SCC
+ SG_ CruiseState     : 0|2@1+ (1,0) [0|3] "" EMS,TCU
+ SG_ GapLevel        : 2|2@1+ (1,0) [0|3] "" EMS,TCU
+ SG_ Reserved0       : 4|4@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ CruiseSetSpeed  : 8|8@1+ (1,0) [0|255] "km/h" EMS,TCU
+
+BO_ 269 frmPowertrainHealthMsg: 2 VCU
+ SG_ PtAliveCnt      : 0|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ PtDiagState     : 8|4@1+ (1,0) [0|15] "" TEST_SCN
+ SG_ PtFailCode      : 12|4@1+ (1,0) [0|15] "" TEST_SCN
+
+BO_ 302 frmEngineTorqueMsg: 2 EMS
+ SG_ EngineTorqueAct : 0|16@1+ (1,0) [0|65535] "Nm" VCU
+
+BO_ 303 frmEngineLoadMsg: 1 EMS
+ SG_ EngineLoad      : 0|8@1+ (1,0) [0|100] "%" VCU
+
+BO_ 304 frmTransShiftStateMsg: 2 TCU
+ SG_ ShiftState      : 0|3@1+ (1,0) [0|7] "" VCU
+ SG_ ShiftTargetGear : 3|3@1+ (1,0) [0|7] "" VCU
+ SG_ Reserved0       : 6|2@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ ShiftSlip       : 8|8@1+ (1,0) [0|255] "" VCU
+
+BO_ 682 frmPtDiagReqMsg: 3 TEST_SCN
+ SG_ PtDiagServiceId : 0|8@1+ (1,0) [0|255] "" VCU
+ SG_ PtDiagDidHigh   : 8|8@1+ (1,0) [0|255] "" VCU
+ SG_ PtDiagDidLow    : 16|8@1+ (1,0) [0|255] "" VCU
+
+BO_ 270 frmPtDiagResMsg: 3 VCU
+ SG_ PtDiagRespCode  : 0|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ PtDiagData0     : 8|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ PtDiagData1     : 16|8@1+ (1,0) [0|255] "" TEST_SCN
+
+BO_ 683 frmSccDiagReqMsg: 3 TEST_SCN
+ SG_ SccDiagServiceId : 0|8@1+ (1,0) [0|255] "" SCC
+ SG_ SccDiagDidHigh   : 8|8@1+ (1,0) [0|255] "" SCC
+ SG_ SccDiagDidLow    : 16|8@1+ (1,0) [0|255] "" SCC
+
+BO_ 684 frmSccDiagResMsg: 3 SCC
+ SG_ SccDiagRespCode  : 0|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ SccDiagData0     : 8|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ SccDiagData1     : 16|8@1+ (1,0) [0|255] "" TEST_SCN
+
+BO_ 305 frmThermalMgmtStateMsg: 2 EMS
+ SG_ ThermalMode     : 0|3@1+ (1,0) [0|7] "" VCU
+ SG_ FanDuty         : 3|5@1+ (1,0) [0|31] "" VCU
+ SG_ CoolantTarget   : 8|8@1+ (1,0) [0|255] "degC" VCU
+
+BO_ 271 frmEnergyFlowStateMsg: 2 VCU
+ SG_ EnergyFlowMode  : 0|3@1+ (1,0) [0|7] "" EMS,TCU
+ SG_ RegenLevel      : 3|5@1+ (1,0) [0|31] "" EMS,TCU
+ SG_ PowerBalance    : 8|8@1+ (1,0) [0|255] "" EMS,TCU
+
+BO_ 272 frmPowertrainCtrlAuthMsg: 1 VCU
+ SG_ CtrlAuthLevel   : 0|3@1+ (1,0) [0|7] "" EMS,TCU
+ SG_ CtrlAuthSource  : 3|3@1+ (1,0) [0|7] "" EMS,TCU
+ SG_ Reserved0       : 6|2@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 306 frmObcStateMsg: 2 OBC
+ SG_ ObcState         : 0|3@1+ (1,0) [0|7] "" VCU
+ SG_ AcPlugState      : 3|1@1+ (1,0) [0|1] "" VCU
+ SG_ Reserved0        : 4|4@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ ChargePowerKw    : 8|8@1+ (1,0) [0|255] "kW" VCU
+
+BO_ 307 frmDcdcStateMsg: 3 DCDC
+ SG_ DcdcMode         : 0|3@1+ (1,0) [0|7] "" VCU
+ SG_ Reserved0        : 3|5@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ LvOutputVolt     : 8|8@1+ (1,0) [0|255] "0.1V" VCU
+ SG_ LvOutputCurr     : 16|8@1+ (1,0) [0|255] "A" VCU
+
+BO_ 308 frmMcuStateMsg: 4 MCU
+ SG_ McuState         : 0|3@1+ (1,0) [0|7] "" VCU,EMS
+ SG_ Reserved0        : 3|5@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ MotorTorqueCmd   : 8|8@1+ (1,0) [0|255] "Nm" VCU,EMS
+ SG_ MotorSpeedRpm    : 16|16@1+ (1,0) [0|65535] "rpm" VCU,EMS
+
+BO_ 309 frmInverterStateMsg: 3 INVERTER
+ SG_ InverterState    : 0|3@1+ (1,0) [0|7] "" VCU,EMS
+ SG_ Reserved0        : 3|5@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ InvTemp          : 8|8@1+ (1,0) [0|255] "degC" VCU,EMS
+ SG_ DcLinkVolt       : 16|8@1+ (1,0) [0|255] "V" VCU,EMS
+
+BO_ 310 frm4wdStateMsg: 2 _4WD
+ SG_ Mode4wd          : 0|3@1+ (1,0) [0|7] "" VCU
+ SG_ CenterClutchState : 3|2@1+ (1,0) [0|3] "" VCU
+ SG_ TorqueSplitFront : 8|8@1+ (1,0) [0|100] "%" VCU
+
+BO_ 311 frmBatBmsStateMsg: 3 BAT_BMS
+ SG_ BmsState         : 0|3@1+ (1,0) [0|7] "" VCU,OBC,DCDC
+ SG_ PackSoc          : 8|8@1+ (1,0) [0|100] "%" VCU,OBC,DCDC
+ SG_ PackTemp         : 16|8@1+ (1,0) [0|255] "degC" VCU,OBC,DCDC
+
+BO_ 312 frmFpcmStateMsg: 3 FPCM
+ SG_ FpcmState        : 0|3@1+ (1,0) [0|7] "" EMS,VCU
+ SG_ Reserved0        : 3|5@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ PumpDuty         : 8|8@1+ (1,0) [0|100] "%" EMS,VCU
+ SG_ LinePressure     : 16|8@1+ (1,0) [0|255] "kPa" EMS,VCU
+
+BO_ 313 frmLvrStateMsg: 2 LVR
+ SG_ LeverPosition    : 0|3@1+ (1,0) [0|7] "" TCU,VCU
+ SG_ LeverValid       : 3|1@1+ (1,0) [0|1] "" TCU,VCU
+ SG_ ParkLockCmd      : 4|1@1+ (1,0) [0|1] "" TCU,VCU
+ SG_ Reserved0        : 5|3@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ LeverState       : 8|3@1+ (1,0) [0|7] "" TCU,VCU
+ SG_ Reserved1        : 11|5@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 314 frmIsgStateMsg: 2 ISG
+ SG_ IsgState         : 0|3@1+ (1,0) [0|7] "" EMS,VCU
+ SG_ RestartReady     : 3|1@1+ (1,0) [0|1] "" EMS,VCU
+ SG_ Reserved0        : 4|4@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ RecuperationLvl  : 8|8@1+ (1,0) [0|100] "%" EMS,VCU
+
+BO_ 315 frmEopStateMsg: 4 EOP
+ SG_ EopState         : 0|3@1+ (1,0) [0|7] "" EMS,VCU
+ SG_ Reserved0        : 3|5@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ PumpRpm          : 8|16@1+ (1,0) [0|65535] "rpm" EMS,VCU
+ SG_ OilPressure      : 24|8@1+ (1,0) [0|255] "kPa" EMS,VCU
+
+BO_ 316 frmEwpStateMsg: 3 EWP
+ SG_ EwpState         : 0|3@1+ (1,0) [0|7] "" EMS,VCU
+ SG_ Reserved0        : 3|5@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ PumpDuty         : 8|8@1+ (1,0) [0|100] "%" EMS,VCU
+ SG_ CoolantFlow      : 16|8@1+ (1,0) [0|255] "Lpm" EMS,VCU
+
+BO_ 317 frmChargePortCtrlStateMsg: 3 CPC
+ SG_ PortLockState    : 0|2@1+ (1,0) [0|3] "" OBC,BAT_BMS,VCU
+ SG_ PlugState        : 2|1@1+ (1,0) [0|1] "" OBC,BAT_BMS,VCU
+ SG_ ChargeEnable     : 3|1@1+ (1,0) [0|1] "" OBC,BAT_BMS,VCU
+ SG_ ThermalState     : 4|2@1+ (1,0) [0|3] "" OBC,BAT_BMS,VCU
+ SG_ Reserved0        : 6|2@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ ChargeTargetSoc  : 8|8@1+ (1,0) [0|100] "%" OBC,BAT_BMS,VCU
+ SG_ Reserved1        : 16|8@1+ (1,0) [0|0] "" Vector__XXX
+
+CM_ BO_ 680 "Powertrain baseline: ignition state and engine state.";
+CM_ BO_ 681 "Powertrain baseline: gear input and gear state.";
+CM_ BO_ 265 "Powertrain baseline: domain routing policy and boundary status.";
+CM_ BO_ 298 "Powertrain baseline: engine RPM and thermal state.";
+CM_ BO_ 299 "Powertrain baseline: fuel and battery state.";
+CM_ BO_ 300 "Powertrain baseline: throttle position and request.";
+CM_ BO_ 301 "Powertrain baseline: transmission thermal state.";
+CM_ BO_ 266 "Powertrain baseline: drive mode and powertrain state.";
+CM_ BO_ 267 "Powertrain baseline: torque and speed limits.";
+CM_ BO_ 268 "Powertrain baseline: cruise state, gap, and set speed.";
+CM_ BO_ 269 "Powertrain health/diagnostic state.";
+CM_ BO_ 302 "Comm_204: engine torque extension.";
+CM_ BO_ 303 "Comm_204: engine load extension.";
+CM_ BO_ 304 "Comm_204: transmission shift state extension.";
+CM_ BO_ 682 "Comm_205: powertrain diagnostic request.";
+CM_ BO_ 270 "Comm_205: powertrain diagnostic response.";
+CM_ BO_ 683 "Powertrain runtime: SCC diagnostic request.";
+CM_ BO_ 684 "Powertrain runtime: SCC diagnostic response.";
+CM_ BO_ 305 "Comm_204: thermal management state extension.";
+CM_ BO_ 271 "Comm_204: energy flow state extension.";
+CM_ BO_ 272 "Comm_204: powertrain control authorization extension.";
+CM_ BO_ 306 "Power electronics extension: onboard charger state.";
+CM_ BO_ 307 "Power electronics extension: low-voltage DCDC state.";
+CM_ BO_ 308 "Power electronics extension: motor control unit state.";
+CM_ BO_ 309 "Power electronics extension: inverter state.";
+CM_ BO_ 310 "Powertrain extension: 4WD torque split and clutch state.";
+CM_ BO_ 311 "Powertrain extension: battery management state.";
+CM_ BO_ 312 "Powertrain runtime: fuel pump control module state.";
+CM_ BO_ 313 "Powertrain runtime: electronic lever state.";
+CM_ BO_ 314 "Powertrain runtime: idle stop and go state.";
+CM_ BO_ 315 "Powertrain runtime: electric oil pump state.";
+CM_ BO_ 316 "Powertrain runtime: electric water pump state.";
+CM_ BO_ 317 "Powertrain runtime: charge port control state derived from OBC/BMS and drive-state context.";
+
+BA_DEF_ BO_ "GenMsgCycleTime" INT 0 10000;
+BA_DEF_DEF_ "GenMsgCycleTime" 0;
+BA_ "GenMsgCycleTime" BO_ 680 100;
+BA_ "GenMsgCycleTime" BO_ 681 100;
+BA_ "GenMsgCycleTime" BO_ 265 100;
+BA_ "GenMsgCycleTime" BO_ 298 100;
+BA_ "GenMsgCycleTime" BO_ 299 100;
+BA_ "GenMsgCycleTime" BO_ 300 100;
+BA_ "GenMsgCycleTime" BO_ 301 100;
+BA_ "GenMsgCycleTime" BO_ 266 100;
+BA_ "GenMsgCycleTime" BO_ 267 100;
+BA_ "GenMsgCycleTime" BO_ 268 100;
+BA_ "GenMsgCycleTime" BO_ 269 100;
+BA_ "GenMsgCycleTime" BO_ 302 100;
+BA_ "GenMsgCycleTime" BO_ 303 100;
+BA_ "GenMsgCycleTime" BO_ 304 100;
+BA_ "GenMsgCycleTime" BO_ 682 0;
+BA_ "GenMsgCycleTime" BO_ 270 0;
+BA_ "GenMsgCycleTime" BO_ 683 0;
+BA_ "GenMsgCycleTime" BO_ 684 0;
+BA_ "GenMsgCycleTime" BO_ 305 100;
+BA_ "GenMsgCycleTime" BO_ 271 100;
+BA_ "GenMsgCycleTime" BO_ 272 100;
+BA_ "GenMsgCycleTime" BO_ 306 100;
+BA_ "GenMsgCycleTime" BO_ 307 100;
+BA_ "GenMsgCycleTime" BO_ 308 100;
+BA_ "GenMsgCycleTime" BO_ 309 100;
+BA_ "GenMsgCycleTime" BO_ 310 100;
+BA_ "GenMsgCycleTime" BO_ 311 100;
+BA_ "GenMsgCycleTime" BO_ 312 100;
+BA_ "GenMsgCycleTime" BO_ 313 100;
+BA_ "GenMsgCycleTime" BO_ 314 100;
+BA_ "GenMsgCycleTime" BO_ 315 100;
+BA_ "GenMsgCycleTime" BO_ 316 100;
+BA_ "GenMsgCycleTime" BO_ 317 100;
+
+VAL_ 680 IgnitionState
+  0 "Off"
+  1 "On" ;
+
+VAL_ 680 EngineState
+  0 "Off"
+  1 "Starting"
+  2 "Running"
+  3 "Fault" ;
+
+VAL_ 681 GearInput
+  0 "P"
+  1 "R"
+  2 "N"
+  3 "D"
+  4 "S"
+  5 "M"
+  6 "Reserved6"
+  7 "Reserved7" ;
+
+VAL_ 681 GearState
+  0 "P"
+  1 "R"
+  2 "N"
+  3 "D"
+  4 "S"
+  5 "M"
+  6 "Reserved6"
+  7 "Reserved7" ;
+
+VAL_ 299 ChargingState
+  0 "Idle"
+  1 "Charging"
+  2 "Discharging"
+  3 "Fault" ;
+
+VAL_ 266 DriveMode
+  0 "Normal"
+  1 "Eco"
+  2 "Sport"
+  3 "Snow"
+  4 "Comfort"
+  5 "Custom"
+  6 "Reserved6"
+  7 "Reserved7" ;
+
+VAL_ 266 EcoMode
+  0 "Off"
+  1 "On" ;
+
+VAL_ 266 SportMode
+  0 "Off"
+  1 "On" ;
+
+VAL_ 266 SnowMode
+  0 "Off"
+  1 "On" ;
+
+VAL_ 268 CruiseState
+  0 "Off"
+  1 "Standby"
+  2 "Active"
+  3 "Fault" ;
+
+VAL_ 317 PortLockState 0 "Unlocked" 1 "Ready" 2 "Locked" 3 "Fault";
+VAL_ 317 PlugState 0 "Unplugged" 1 "Plugged";
+VAL_ 317 ChargeEnable 0 "Disabled" 1 "Enabled";
+VAL_ 317 ThermalState 0 "Normal" 1 "Warm" 2 "Hot" 3 "Fault";

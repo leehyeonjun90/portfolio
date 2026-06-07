@@ -1,0 +1,548 @@
+VERSION "ADAS_CAN_v1.0"
+
+
+NS_ :
+  NS_DESC_
+  CM_
+  BA_DEF_
+  BA_
+  VAL_
+  CAT_DEF_
+  CAT_
+  FILTER
+  BA_DEF_DEF_
+  EV_DATA_
+  ENVVAR_DATA_
+  SGTYPE_
+  SGTYPE_VAL_
+  BA_DEF_SGTYPE_
+  BA_SGTYPE_
+  SIG_TYPE_REF_
+  VAL_TABLE_
+  SIG_GROUP_
+  SIG_VALTYPE_
+  SIGTYPE_VALTYPE_
+  BO_TX_BU_
+  BA_DEF_REL_
+  BA_REL_
+  BA_SGTYPE_REL_
+  SG_MUL_VAL_
+
+BS_:
+
+BU_: ADAS ESC TEST_SCN BCM IVI LDWS_LKAS FCA BCW LCA SPAS RSPA AVM FCAM FRADAR SRR_FL SRR_FR PUS DMS OMS SRR_RL SRR_RR AEB PKM RPC RRM SPM HWP LDR TRM CLU MDPS VCU SCC Vector__XXX
+
+BO_ 449 frmAdasChassisStatusMsg: 2 ADAS
+ SG_ AdasChassisState : 0|8@1+ (1,0) [0|255] "" ESC
+ SG_ AdasHealthLevel  : 8|8@1+ (1,0) [0|255] "" ESC
+
+BO_ 451 ethEmergencyRiskMsg: 5 ADAS
+ SG_ RiskLevel          : 0|8@1+  (1,0) [0|100] "" ADAS,TEST_SCN
+ SG_ EtaSeconds         : 8|8@1+  (1,0) [0|255] "s" ADAS,TEST_SCN
+ SG_ VehicleSpeed       : 16|8@1+ (1,0) [0|255] "km/h" ADAS,TEST_SCN
+ SG_ EmergencyDirection : 24|2@1+ (1,0) [0|3] "" ADAS,TEST_SCN
+ SG_ EmergencyType      : 26|2@1+ (1,0) [0|2] "" ADAS,TEST_SCN
+ SG_ Reserved0          : 28|12@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 452 ethDecelAssistReqMsg: 4 ADAS
+ SG_ DecelAssistReq      : 0|1@1+ (1,0) [0|1] "" TEST_SCN,ESC
+ SG_ FailSafeMode        : 1|2@1+ (1,0) [0|2] "" TEST_SCN,ESC
+ SG_ DriverReleaseReason : 3|2@1+ (1,0) [0|3] "" TEST_SCN,ESC
+ SG_ EmergencyContext    : 5|2@1+ (1,0) [0|2] "" TEST_SCN,ESC
+ SG_ RiskLevel           : 8|8@1+ (1,0) [0|100] "" TEST_SCN,ESC
+ SG_ Reserved0           : 16|16@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 518 ethSelectedAlertMsg: 2 ADAS
+ SG_ selectedAlertLevel  : 0|3@1+ (1,0) [0|7] "" BCM,IVI,TEST_SCN
+ SG_ selectedAlertType   : 3|3@1+ (1,0) [0|7] "" BCM,IVI,TEST_SCN
+ SG_ timeoutClear        : 6|1@1+ (1,0) [0|1] "" BCM,IVI,TEST_SCN
+ SG_ Reserved0           : 7|9@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 453 ethObjectRiskInputMsg: 8 TEST_SCN
+ SG_ ObjectTrackValid      : 0|1@1+  (1,0) [0|1] "" ADAS
+ SG_ ObjectRangeM          : 1|9@1+  (1,0) [0|500] "m" ADAS
+ SG_ ObjectRelSpeedKph     : 10|9@1- (1,0) [-200|200] "km/h" ADAS
+ SG_ ObjectConfidence      : 19|7@1+ (1,0) [0|100] "%" ADAS
+ SG_ IntersectionConflict  : 26|1@1+ (1,0) [0|1] "" ADAS
+ SG_ MergeCutIn            : 27|1@1+ (1,0) [0|1] "" ADAS
+ SG_ ObjectAlertHoldMs     : 28|13@1+ (1,0) [0|5000] "ms" ADAS
+ SG_ Reserved0             : 41|23@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 454 ethObjectRiskStateMsg: 6 ADAS
+ SG_ ObjectRiskClass       : 0|3@1+   (1,0) [0|7] "" ADAS,TEST_SCN
+ SG_ ObjectTtcMinMs        : 3|14@1+  (1,0) [0|10000] "ms" ADAS,TEST_SCN
+ SG_ ObjectRiskLevel       : 17|7@1+  (1,0) [0|100] "" ADAS,TEST_SCN
+ SG_ ObjectTrackValid      : 24|1@1+  (1,0) [0|1] "" ADAS,TEST_SCN
+ SG_ Reserved0             : 25|23@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 455 ethObjectScenarioAlertMsg: 4 ADAS
+ SG_ ObjectAlertLevel      : 0|3@1+   (1,0) [0|7] "" BCM,IVI,TEST_SCN
+ SG_ ObjectAlertType       : 3|3@1+   (1,0) [0|7] "" BCM,IVI,TEST_SCN
+ SG_ IntersectionConflict  : 6|1@1+   (1,0) [0|1] "" BCM,IVI,TEST_SCN
+ SG_ MergeCutIn            : 7|1@1+   (1,0) [0|1] "" BCM,IVI,TEST_SCN
+ SG_ ObjectRiskClass       : 8|3@1+   (1,0) [0|7] "" BCM,IVI,TEST_SCN
+ SG_ Reserved0             : 11|21@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 456 frmLdwsLkasStateMsg: 4 LDWS_LKAS
+ SG_ LaneDepartureWarn    : 0|1@1+  (1,0) [0|1] "" CLU,ADAS
+ SG_ LaneKeepAssistActive : 1|1@1+  (1,0) [0|1] "" CLU,ADAS
+ SG_ LaneGuideState       : 2|2@1+  (1,0) [0|3] "" CLU,ADAS
+ SG_ TurnLampState        : 8|2@1+  (1,0) [0|3] "" CLU,ADAS
+ SG_ VehicleSpeed         : 16|8@1+ (1,0) [0|255] "km/h" CLU,ADAS
+ SG_ SelectedAlertLevel   : 24|3@1+ (1,0) [0|7] "" CLU,ADAS
+ SG_ Reserved0            : 27|5@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 457 frmFcaStateMsg: 4 FCA
+ SG_ FcwState             : 0|2@1+  (1,0) [0|3] "" CLU,ADAS
+ SG_ AebRequest           : 2|1@1+  (1,0) [0|1] "" CLU,ADAS,ESC
+ SG_ DecelAssistReq       : 3|1@1+  (1,0) [0|1] "" CLU,ADAS,ESC
+ SG_ ObjectRiskClass      : 8|3@1+  (1,0) [0|7] "" CLU,ADAS
+ SG_ TtcBucket            : 16|8@1+ (1,0) [0|255] "" CLU,ADAS
+ SG_ SelectedAlertLevel   : 24|3@1+ (1,0) [0|7] "" CLU,ADAS
+ SG_ Reserved0            : 27|5@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 458 frmBcwStateMsg: 3 BCW
+ SG_ BcwWarnLeft          : 0|1@1+  (1,0) [0|1] "" CLU,ADAS
+ SG_ BcwWarnRight         : 1|1@1+  (1,0) [0|1] "" CLU,ADAS
+ SG_ MergeConflict        : 2|1@1+  (1,0) [0|1] "" CLU,ADAS
+ SG_ ObjectRiskClass      : 8|3@1+  (1,0) [0|7] "" CLU,ADAS
+ SG_ SelectedAlertLevel   : 16|3@1+ (1,0) [0|7] "" CLU,ADAS
+ SG_ Reserved0            : 19|5@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 459 frmLcaStateMsg: 3 LCA
+ SG_ LcaReady             : 0|1@1+  (1,0) [0|1] "" CLU,ADAS
+ SG_ LcaWarn              : 1|1@1+  (1,0) [0|1] "" CLU,ADAS
+ SG_ LcaDirection         : 2|2@1+  (1,0) [0|3] "" CLU,ADAS
+ SG_ MergeConflict        : 8|1@1+  (1,0) [0|1] "" CLU,ADAS
+ SG_ SelectedAlertLevel   : 16|3@1+ (1,0) [0|7] "" CLU,ADAS
+ SG_ Reserved0            : 19|5@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 460 frmSpasStateMsg: 4 SPAS
+ SG_ SpasActive           : 0|1@1+  (1,0) [0|1] "" CLU,ADAS
+ SG_ SpasStage            : 1|2@1+  (1,0) [0|3] "" CLU,ADAS
+ SG_ SteeringAssistReq    : 8|1@1+  (1,0) [0|1] "" MDPS,ADAS
+ SG_ VehicleSpeed         : 16|8@1+ (1,0) [0|255] "km/h" CLU,ADAS
+ SG_ Reserved0            : 24|8@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 461 frmRspaStateMsg: 4 RSPA
+ SG_ RspaReady            : 0|1@1+  (1,0) [0|1] "" CLU,ADAS
+ SG_ RspaDirection        : 1|2@1+  (1,0) [0|3] "" CLU,ADAS
+ SG_ BrakeHoldReq         : 8|1@1+  (1,0) [0|1] "" ESC,ADAS
+ SG_ VehicleSpeed         : 16|8@1+ (1,0) [0|255] "km/h" CLU,ADAS
+ SG_ Reserved0            : 24|8@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 462 frmAvmStateMsg: 4 AVM
+ SG_ AvmActive            : 0|1@1+  (1,0) [0|1] "" IVI,CLU
+ SG_ ViewMode             : 1|3@1+  (1,0) [0|7] "" IVI,CLU
+ SG_ SteeringOverlay      : 8|1@1+  (1,0) [0|1] "" IVI,CLU
+ SG_ VehicleSpeed         : 16|8@1+ (1,0) [0|255] "km/h" IVI,CLU
+ SG_ Reserved0            : 24|8@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 463 frmFcamStateMsg: 4 FCAM
+ SG_ CameraHealth         : 0|2@1+  (1,0) [0|3] "" ADAS,CLU
+ SG_ ObjectDetected       : 2|1@1+  (1,0) [0|1] "" ADAS,CLU
+ SG_ LaneModelValid       : 3|1@1+  (1,0) [0|1] "" ADAS,CLU
+ SG_ Confidence           : 8|8@1+  (1,0) [0|100] "%" ADAS,CLU
+ SG_ Reserved0            : 16|16@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 464 frmFradarStateMsg: 4 FRADAR
+ SG_ RadarHealth          : 0|2@1+  (1,0) [0|3] "" ADAS,CLU
+ SG_ ObjectDetected       : 2|1@1+  (1,0) [0|1] "" ADAS,CLU
+ SG_ DistanceBucket       : 8|8@1+  (1,0) [0|255] "" ADAS,CLU
+ SG_ RelSpeedBucket       : 16|8@1+ (1,0) [0|255] "" ADAS,CLU
+ SG_ Reserved0            : 24|8@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 465 frmSrrFlStateMsg: 4 SRR_FL
+ SG_ SideObjectDetected   : 0|1@1+  (1,0) [0|1] "" ADAS,CLU
+ SG_ SideRiskLevel        : 8|8@1+  (1,0) [0|100] "" ADAS,CLU
+ SG_ MergeConflict        : 16|1@1+ (1,0) [0|1] "" ADAS,CLU
+ SG_ TurnLampState        : 24|2@1+ (1,0) [0|3] "" ADAS,CLU
+ SG_ Reserved0            : 26|6@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 466 frmSrrFrStateMsg: 4 SRR_FR
+ SG_ SideObjectDetected   : 0|1@1+  (1,0) [0|1] "" ADAS,CLU
+ SG_ SideRiskLevel        : 8|8@1+  (1,0) [0|100] "" ADAS,CLU
+ SG_ MergeConflict        : 16|1@1+ (1,0) [0|1] "" ADAS,CLU
+ SG_ TurnLampState        : 24|2@1+ (1,0) [0|3] "" ADAS,CLU
+ SG_ Reserved0            : 26|6@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 467 frmParkUltrasonicStateMsg: 4 PUS
+ SG_ ParkAssistActive     : 0|1@1+  (1,0) [0|1] "" BCM,IVI,CLU
+ SG_ MinDistanceCm        : 8|8@1+  (1,0) [0|255] "cm" BCM,IVI,CLU
+ SG_ ZoneMask             : 16|8@1+ (1,0) [0|255] "" BCM,IVI,CLU
+ SG_ AudibleWarn          : 24|1@1+ (1,0) [0|1] "" BCM,IVI,CLU
+ SG_ Reserved0            : 25|7@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 468 frmDmsStateMsg: 4 DMS
+ SG_ DriverMonitorActive  : 0|1@1+  (1,0) [0|1] "" CLU
+ SG_ AttentionLevel       : 8|2@1+  (1,0) [0|3] "" CLU
+ SG_ FatigueWarn          : 10|1@1+ (1,0) [0|1] "" CLU
+ SG_ DriverSeatBelt       : 16|1@1+ (1,0) [0|1] "" CLU
+ SG_ VehicleSpeed         : 24|8@1+ (1,0) [0|255] "km/h" CLU
+
+BO_ 469 frmOmsStateMsg: 4 OMS
+ SG_ OccupantDetected     : 0|1@1+  (1,0) [0|1] "" BCM,CLU
+ SG_ ChildPresenceWarn    : 8|1@1+  (1,0) [0|1] "" BCM,CLU
+ SG_ PassengerSeatBelt    : 16|1@1+ (1,0) [0|1] "" BCM,CLU
+ SG_ SeatBeltWarnLevel    : 24|3@1+ (1,0) [0|7] "" BCM,CLU
+ SG_ OccupantAlertActive  : 27|1@1+ (1,0) [0|1] "" BCM,CLU
+ SG_ Reserved0            : 28|4@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 470 frmSrrRlStateMsg: 4 SRR_RL
+ SG_ SideObjectDetected   : 0|1@1+  (1,0) [0|1] "" ADAS,CLU
+ SG_ SideRiskLevel        : 8|8@1+  (1,0) [0|100] "" ADAS,CLU
+ SG_ MergeConflict        : 16|1@1+ (1,0) [0|1] "" ADAS,CLU
+ SG_ TurnLampState        : 24|2@1+ (1,0) [0|3] "" ADAS,CLU
+ SG_ Reserved0            : 26|6@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 471 frmSrrRrStateMsg: 4 SRR_RR
+ SG_ SideObjectDetected   : 0|1@1+  (1,0) [0|1] "" ADAS,CLU
+ SG_ SideRiskLevel        : 8|8@1+  (1,0) [0|100] "" ADAS,CLU
+ SG_ MergeConflict        : 16|1@1+ (1,0) [0|1] "" ADAS,CLU
+ SG_ TurnLampState        : 24|2@1+ (1,0) [0|3] "" ADAS,CLU
+ SG_ Reserved0            : 26|6@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 472 frmAebDomainStateMsg: 4 AEB
+ SG_ AebArmed             : 0|1@1+  (1,0) [0|1] "" ADAS,ESC,CLU
+ SG_ StopReq              : 1|1@1+  (1,0) [0|1] "" ADAS,ESC,CLU
+ SG_ DecelProfile         : 2|2@1+  (1,0) [0|3] "" ADAS,ESC,CLU
+ SG_ DomainHealth         : 8|2@1+  (1,0) [0|3] "" ADAS,CLU
+ SG_ ObjectRiskClass      : 10|3@1+ (1,0) [0|7] "" ADAS,CLU
+ SG_ SelectedAlertLevel   : 16|3@1+ (1,0) [0|7] "" ADAS,CLU
+ SG_ TtcBucket            : 24|8@1+ (1,0) [0|255] "" ADAS,CLU
+
+BO_ 473 frmParkMasterStateMsg: 4 PKM
+ SG_ ParkMasterActive     : 0|1@1+  (1,0) [0|1] "" ADAS,IVI,CLU
+ SG_ AutoManeuverReady    : 1|1@1+  (1,0) [0|1] "" ADAS,IVI,CLU
+ SG_ ParkPhase            : 2|3@1+  (1,0) [0|7] "" ADAS,IVI,CLU
+ SG_ ViewMode             : 8|3@1+  (1,0) [0|7] "" ADAS,IVI,CLU
+ SG_ MinDistanceCm        : 16|8@1+ (1,0) [0|255] "cm" ADAS,IVI,CLU
+ SG_ AssistStage          : 24|3@1+ (1,0) [0|7] "" ADAS,IVI,CLU
+ SG_ SurroundHealth       : 27|2@1+ (1,0) [0|3] "" ADAS,IVI,CLU
+ SG_ Reserved0            : 29|3@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 474 frmRoadPreviewCameraStateMsg: 4 RPC
+ SG_ PreviewHealth        : 0|2@1+  (1,0) [0|3] "" ADAS,CLU
+ SG_ LanePreviewValid     : 2|1@1+  (1,0) [0|1] "" ADAS,CLU
+ SG_ ZonePreview          : 8|3@1+  (1,0) [0|7] "" ADAS,CLU
+ SG_ SpeedLimit           : 16|8@1+ (1,0) [0|255] "km/h" ADAS,CLU
+ SG_ PreviewConfidence    : 24|7@1+ (1,0) [0|100] "%" ADAS,CLU
+ SG_ Reserved0            : 31|1@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 475 frmRearRadarMasterStateMsg: 4 RRM
+ SG_ RearObjectDetected   : 0|1@1+  (1,0) [0|1] "" ADAS,CLU
+ SG_ LaneChangeBlock      : 1|1@1+  (1,0) [0|1] "" ADAS,CLU
+ SG_ RearRiskLevel        : 8|8@1+  (1,0) [0|100] "" ADAS,CLU
+ SG_ MergeConflict        : 16|1@1+ (1,0) [0|1] "" ADAS,CLU
+ SG_ TurnLampState        : 24|2@1+ (1,0) [0|3] "" ADAS,CLU
+ SG_ SensorHealth         : 26|2@1+ (1,0) [0|3] "" ADAS,CLU
+ SG_ Reserved0            : 28|4@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 476 frmSurroundParkMasterStateMsg: 4 SPM
+ SG_ SurroundActive       : 0|1@1+  (1,0) [0|1] "" ADAS,IVI,CLU
+ SG_ AutoParkReady        : 1|1@1+  (1,0) [0|1] "" ADAS,IVI,CLU
+ SG_ ViewMode             : 8|3@1+  (1,0) [0|7] "" ADAS,IVI,CLU
+ SG_ ProximityClass       : 16|3@1+ (1,0) [0|7] "" ADAS,IVI,CLU
+ SG_ SteeringAssistReq    : 19|1@1+ (1,0) [0|1] "" ADAS,IVI,CLU
+ SG_ BrakeHoldReq         : 20|1@1+ (1,0) [0|1] "" ADAS,IVI,CLU
+ SG_ DistanceBucket       : 24|8@1+ (1,0) [0|255] "" ADAS,IVI,CLU
+
+BO_ 477 frmHighwayPilotStateMsg: 4 HWP
+ SG_ HighwayPilotReady    : 0|1@1+  (1,0) [0|1] "" ADAS,CLU
+ SG_ LongCtrlActive       : 1|1@1+  (1,0) [0|1] "" ADAS,CLU
+ SG_ LatCtrlActive        : 2|1@1+  (1,0) [0|1] "" ADAS,CLU
+ SG_ DriverMonitorReq     : 3|1@1+  (1,0) [0|1] "" ADAS,CLU,DMS
+ SG_ AvailabilityLevel    : 8|3@1+  (1,0) [0|7] "" ADAS,CLU
+ SG_ SetSpeed             : 16|8@1+ (1,0) [0|255] "km/h" ADAS,CLU
+ SG_ LaneGuideState       : 24|2@1+ (1,0) [0|3] "" ADAS,CLU
+ SG_ CruiseState          : 26|2@1+ (1,0) [0|3] "" ADAS,CLU
+ SG_ Reserved0            : 28|4@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 478 frmLidarStateMsg: 4 LDR
+ SG_ LidarHealth          : 0|2@1+  (1,0) [0|3] "" ADAS,CLU
+ SG_ TargetDetected       : 2|1@1+  (1,0) [0|1] "" ADAS,CLU
+ SG_ FreeSpaceClass       : 8|3@1+  (1,0) [0|7] "" ADAS,CLU
+ SG_ Confidence           : 16|8@1+ (1,0) [0|100] "%" ADAS,CLU
+ SG_ RangeBucket          : 24|8@1+ (1,0) [0|255] "" ADAS,CLU
+
+BO_ 479 frmTrailerCtrlStateMsg: 4 TRM
+ SG_ TrailerDetected      : 0|1@1+  (1,0) [0|1] "" ADAS,CLU,VCU
+ SG_ TowMode              : 1|2@1+  (1,0) [0|3] "" ADAS,CLU,VCU
+ SG_ SwayRisk             : 8|8@1+  (1,0) [0|100] "" ADAS,CLU,VCU
+ SG_ StabilityAssistReq   : 16|1@1+ (1,0) [0|1] "" ADAS,CLU,VCU
+ SG_ TurnLampState        : 24|2@1+ (1,0) [0|3] "" ADAS,CLU,VCU
+ SG_ RearRiskLevel        : 26|6@1+ (1,0) [0|63] "" ADAS,CLU,VCU
+
+BO_ 486 frmAdasDomainStateMsg: 8 ADAS
+ SG_ WarningPathStatus    : 0|2@1+  (1,0) [0|3] "" CLU,SCC,AEB,BCW,LCA,LDWS_LKAS,FCAM,FRADAR,LDR,SRR_FL,SRR_FR,SRR_RL,SRR_RR
+ SG_ E2eHealthState       : 2|2@1+  (1,0) [0|3] "" CLU,SCC,AEB,BCW,LCA,LDWS_LKAS,FCAM,FRADAR,LDR,SRR_FL,SRR_FR,SRR_RL,SRR_RR
+ SG_ FailSafeMode         : 4|2@1+  (1,0) [0|3] "" CLU,SCC,AEB,BCW,LCA,LDWS_LKAS,FCAM,FRADAR,LDR,SRR_FL,SRR_FR,SRR_RL,SRR_RR
+ SG_ DecelAssistReq       : 6|1@1+  (1,0) [0|1] "" SCC,FCA
+ SG_ EmergencyContext     : 8|2@1+  (1,0) [0|3] "" SCC
+ SG_ SelectedAlertLevel   : 10|3@1+ (1,0) [0|7] "" SCC,FCA,BCM,IVI,CLU
+ SG_ ObjectRiskClass      : 13|3@1+ (1,0) [0|7] "" SCC,FCA
+ SG_ RiskLevel            : 16|8@1+ (1,0) [0|100] "" SCC
+ SG_ TtcBucket            : 24|8@1+ (1,0) [0|255] "" SCC,FCA
+ SG_ SelectedAlertType    : 32|4@1+ (1,0) [0|15] "" SCC,BCM,IVI
+ SG_ TimeoutClear         : 36|1@1+ (1,0) [0|1] "" CLU,BCM,IVI
+
+BO_ 487 frmFcamInputMsg: 4 TEST_SCN
+ SG_ ObjectTrackValid     : 0|1@1+  (1,0) [0|1] "" FCAM
+ SG_ Confidence           : 8|8@1+  (1,0) [0|100] "%" FCAM
+
+BO_ 488 frmFradarInputMsg: 4 TEST_SCN
+ SG_ ObjectTrackValid     : 0|1@1+  (1,0) [0|1] "" FRADAR
+ SG_ DistanceBucket       : 8|8@1+  (1,0) [0|255] "" FRADAR
+ SG_ RelSpeedBucket       : 16|8@1+ (1,0) [0|255] "" FRADAR
+ SG_ Confidence           : 24|8@1+ (1,0) [0|100] "%" FRADAR
+
+BO_ 489 frmLidarInputMsg: 4 TEST_SCN
+ SG_ TargetDetected       : 0|1@1+  (1,0) [0|1] "" LDR
+ SG_ Confidence           : 8|8@1+  (1,0) [0|100] "%" LDR
+ SG_ RangeBucket          : 16|8@1+ (1,0) [0|255] "" LDR
+ SG_ EventCode            : 24|8@1+ (1,0) [0|255] "" LDR
+
+BO_ 490 frmSrrFlInputMsg: 3 TEST_SCN
+ SG_ MergeConflict        : 0|1@1+  (1,0) [0|1] "" SRR_FL
+ SG_ RiskClass            : 8|3@1+  (1,0) [0|7] "" SRR_FL
+
+BO_ 491 frmSrrFrInputMsg: 3 TEST_SCN
+ SG_ MergeConflict        : 0|1@1+  (1,0) [0|1] "" SRR_FR
+ SG_ RiskClass            : 8|3@1+  (1,0) [0|7] "" SRR_FR
+
+BO_ 492 frmSrrRlInputMsg: 3 TEST_SCN
+ SG_ MergeConflict        : 0|1@1+  (1,0) [0|1] "" SRR_RL
+ SG_ RiskClass            : 8|3@1+  (1,0) [0|7] "" SRR_RL
+
+BO_ 493 frmSrrRrInputMsg: 3 TEST_SCN
+ SG_ MergeConflict        : 0|1@1+  (1,0) [0|1] "" SRR_RR
+ SG_ RiskClass            : 8|3@1+  (1,0) [0|7] "" SRR_RR
+
+BO_ 480 frmAdasDiagReqMsg: 3 TEST_SCN
+ SG_ AdasDiagServiceId : 0|8@1+ (1,0) [0|255] "" ADAS
+ SG_ AdasDiagDidHigh   : 8|8@1+ (1,0) [0|255] "" ADAS
+ SG_ AdasDiagDidLow    : 16|8@1+ (1,0) [0|255] "" ADAS
+
+BO_ 481 frmAdasDiagResMsg: 3 ADAS
+ SG_ AdasDiagRespCode  : 0|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ AdasDiagData0     : 8|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ AdasDiagData1     : 16|8@1+ (1,0) [0|255] "" TEST_SCN
+
+BO_ 482 frmDmsDiagReqMsg: 3 TEST_SCN
+ SG_ DmsDiagServiceId : 0|8@1+ (1,0) [0|255] "" DMS
+ SG_ DmsDiagDidHigh   : 8|8@1+ (1,0) [0|255] "" DMS
+ SG_ DmsDiagDidLow    : 16|8@1+ (1,0) [0|255] "" DMS
+
+BO_ 483 frmDmsDiagResMsg: 3 DMS
+ SG_ DmsDiagRespCode  : 0|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ DmsDiagData0     : 8|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ DmsDiagData1     : 16|8@1+ (1,0) [0|255] "" TEST_SCN
+
+BO_ 484 frmOmsDiagReqMsg: 3 TEST_SCN
+ SG_ OmsDiagServiceId : 0|8@1+ (1,0) [0|255] "" OMS
+ SG_ OmsDiagDidHigh   : 8|8@1+ (1,0) [0|255] "" OMS
+ SG_ OmsDiagDidLow    : 16|8@1+ (1,0) [0|255] "" OMS
+
+BO_ 485 frmOmsDiagResMsg: 3 OMS
+ SG_ OmsDiagRespCode  : 0|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ OmsDiagData0     : 8|8@1+ (1,0) [0|255] "" TEST_SCN
+ SG_ OmsDiagData1     : 16|8@1+ (1,0) [0|255] "" TEST_SCN
+
+CM_ BO_ 449 "Comm_201: ADAS chassis status output. ADAS-owned frame.";
+CM_ SG_ 449 AdasChassisState "Computed ADAS warning level (0=none).";
+CM_ SG_ 449 AdasHealthLevel  "ADAS node health (0=fault 1=ok).";
+
+CM_ BO_ 451 "Comm_120: Emergency proximity risk frame. Produced by ADAS through its internal backbone transport seam.";
+CM_ SG_ 451 RiskLevel "0..100 emergency proximity risk score.";
+CM_ SG_ 451 EtaSeconds "Emergency ETA seconds used by risk model.";
+CM_ SG_ 451 VehicleSpeed "Vehicle speed input used by risk model.";
+CM_ SG_ 451 EmergencyDirection "0=front 1=left 2=right 3=rear.";
+CM_ SG_ 451 EmergencyType "0=none 1=police 2=ambulance.";
+CM_ BO_ 452 "Comm_121: Deceleration assist request frame. Produced by ADAS from ADAS Core decision state through its internal transport seam.";
+CM_ SG_ 452 DecelAssistReq "0=off 1=active.";
+CM_ SG_ 452 FailSafeMode "0=normal 1=degraded 2=blocked.";
+CM_ SG_ 452 DriverReleaseReason "0=none 1=steering 2=brake 3=failsafe.";
+CM_ BO_ 518 "Comm_006/007/008/122: Selected alert distribution frame. Produced by ADAS for BCM/IVI sync through its internal transport seam.";
+CM_ SG_ 518 selectedAlertLevel "Final selected alert level (0..7).";
+CM_ SG_ 518 selectedAlertType "Final selected alert type (0..7).";
+CM_ SG_ 518 timeoutClear "Timeout clear pulse for deterministic reset path.";
+CM_ BO_ 453 "Comm_130: Object risk input frame (SIL harness path). Produced by TEST_SCN and consumed by ADAS.";
+CM_ SG_ 453 ObjectTrackValid "Object track validity.";
+CM_ SG_ 453 ObjectRangeM "Representative object range in meters.";
+CM_ SG_ 453 ObjectRelSpeedKph "Relative speed of representative object (negative=closing).";
+CM_ SG_ 453 ObjectConfidence "Object confidence score in percent.";
+CM_ SG_ 453 IntersectionConflict "1=intersection lateral conflict context.";
+CM_ SG_ 453 MergeCutIn "1=merge/cut-in conflict context.";
+CM_ SG_ 453 ObjectAlertHoldMs "Conservative hold time for temporary track loss.";
+CM_ BO_ 454 "Comm_131: Object risk state frame. Produced by ADAS for object TTC/risk arbitration through its internal transport seam.";
+CM_ SG_ 454 ObjectRiskClass "0=none .. 5=critical object risk class.";
+CM_ SG_ 454 ObjectTtcMinMs "Representative object minimum TTC in ms.";
+CM_ SG_ 454 ObjectRiskLevel "Normalized object risk level (0..100).";
+CM_ BO_ 455 "Comm_132: Object scenario alert frame. Produced by ADAS for object-context alert sharing through its internal transport seam.";
+CM_ SG_ 455 ObjectAlertLevel "Object-context selected alert level.";
+CM_ SG_ 455 ObjectAlertType "Object-context selected alert type.";
+CM_ BO_ 456 "Comm_202: LDWS/LKAS state frame derived from current ADAS core state for lane warning and keep-assist visibility.";
+CM_ SG_ 456 LaneDepartureWarn "Lane departure warning state (0=off 1=warn).";
+CM_ SG_ 456 LaneKeepAssistActive "Lane keep assist active state.";
+CM_ SG_ 456 LaneGuideState "0=none 1=warn 2=assist.";
+CM_ BO_ 457 "Comm_203: FCA state frame derived from current ADAS forward-risk and decel decision state.";
+CM_ SG_ 457 FcwState "0=off 1=advisory 2=warning 3=critical.";
+CM_ SG_ 457 AebRequest "Automatic emergency braking request state.";
+CM_ SG_ 457 TtcBucket "Object TTC bucket in 100 ms units.";
+CM_ BO_ 458 "Comm_204: BCW state frame derived from merge/cut-in conflict and turn intent.";
+CM_ SG_ 458 BcwWarnLeft "Left-side blind-spot/collision warning state.";
+CM_ SG_ 458 BcwWarnRight "Right-side blind-spot/collision warning state.";
+CM_ BO_ 459 "Comm_205: LCA state frame derived from lane-change readiness and conflict state.";
+CM_ SG_ 459 LcaReady "Lane change assist ready state.";
+CM_ SG_ 459 LcaWarn "Lane change conflict warning state.";
+CM_ BO_ 460 "Comm_206: SPAS state frame derived from low-speed steering and parking assist context.";
+CM_ SG_ 460 SpasActive "Smart parking assist active state.";
+CM_ SG_ 460 SteeringAssistReq "Steering assist request for parking maneuver.";
+CM_ BO_ 461 "Comm_207: RSPA state frame derived from remote parking readiness and low-speed hold request.";
+CM_ SG_ 461 RspaReady "Remote smart parking assist ready state.";
+CM_ SG_ 461 BrakeHoldReq "Brake hold request during remote parking maneuver.";
+CM_ BO_ 462 "Comm_208: AVM state frame derived from low-speed surround-view activation context.";
+CM_ SG_ 462 AvmActive "Around-view monitor active state.";
+CM_ SG_ 462 ViewMode "0=off 1=front 2=rear 3=surround.";
+CM_ BO_ 463 "Comm_209: FCAM state frame derived from ADAS object and lane-model confidence.";
+CM_ SG_ 463 CameraHealth "0=fault 1=degraded 2=ok.";
+CM_ SG_ 463 ObjectDetected "Front camera object detected state.";
+CM_ SG_ 463 LaneModelValid "Lane model validity state.";
+CM_ BO_ 464 "Comm_210: Front radar state frame derived from current ADAS object tracking context.";
+CM_ SG_ 464 RadarHealth "0=fault 1=degraded 2=ok.";
+CM_ SG_ 464 ObjectDetected "Front radar target detected state.";
+CM_ BO_ 465 "Comm_211: Left rear side radar frame derived from side conflict and turn intent.";
+CM_ SG_ 465 SideObjectDetected "Left side object detected state.";
+CM_ BO_ 466 "Comm_212: Right rear side radar frame derived from side conflict and turn intent.";
+CM_ SG_ 466 SideObjectDetected "Right side object detected state.";
+CM_ BO_ 467 "Comm_213: Parking ultrasonic state frame derived from low-speed parking proximity context.";
+CM_ SG_ 467 ParkAssistActive "Parking ultrasonic active state.";
+CM_ SG_ 467 MinDistanceCm "Minimum proximity bucket in centimeters.";
+CM_ BO_ 468 "Comm_214: Driver monitoring state frame derived from current alert context and driver restraint state.";
+CM_ SG_ 468 DriverMonitorActive "Driver monitoring active state.";
+CM_ SG_ 468 AttentionLevel "0=unknown 1=normal 2=watch 3=critical.";
+CM_ SG_ 468 FatigueWarn "Driver fatigue warning state.";
+CM_ BO_ 469 "Comm_215: Occupant monitoring state frame derived from passenger restraint and alert context.";
+CM_ SG_ 469 OccupantDetected "Passenger/occupant detected state.";
+CM_ SG_ 469 ChildPresenceWarn "Child presence warning state.";
+CM_ SG_ 469 OccupantAlertActive "Occupant-related alert active state.";
+CM_ BO_ 470 "Comm_216: Left rear side radar frame derived from rear-left side conflict and turn intent.";
+CM_ SG_ 470 SideObjectDetected "Rear-left side object detected state.";
+CM_ BO_ 471 "Comm_217: Right rear side radar frame derived from rear-right side conflict and turn intent.";
+CM_ SG_ 471 SideObjectDetected "Rear-right side object detected state.";
+CM_ BO_ 472 "Comm_218: AEB domain state frame derived from FCA and fail-safe context.";
+CM_ BO_ 473 "Comm_219: Parking master state frame derived from parking assist fusion context.";
+CM_ BO_ 474 "Comm_220: Road preview camera state frame derived from FCAM and preview context.";
+CM_ BO_ 475 "Comm_221: Rear radar master state frame derived from rear radar conflict synthesis.";
+CM_ BO_ 476 "Comm_222: Surround park master frame derived from surround parking perception fusion.";
+CM_ BO_ 477 "Comm_223: Highway pilot readiness frame derived from SCC/LKAS/DMS context.";
+CM_ BO_ 478 "Comm_224: Lidar state frame derived from object safety and free-space context.";
+CM_ BO_ 479 "Comm_225: Trailer control state frame derived from rear radar and vehicle stability context.";
+CM_ BO_ 486 "Comm_226: ADAS domain state fanout for non-backbone ADAS leaf consumers.";
+CM_ BO_ 487 "Comm_227: FCAM sensor input frame from SIL stimulus into ADAS CAN domain.";
+CM_ BO_ 488 "Comm_228: Front radar sensor input frame from SIL stimulus into ADAS CAN domain.";
+CM_ BO_ 489 "Comm_229: Lidar sensor input frame from SIL stimulus into ADAS CAN domain.";
+CM_ BO_ 490 "Comm_230: Front-left side radar input frame from SIL stimulus into ADAS CAN domain.";
+CM_ BO_ 491 "Comm_231: Front-right side radar input frame from SIL stimulus into ADAS CAN domain.";
+CM_ BO_ 492 "Comm_232: Rear-left side radar input frame from SIL stimulus into ADAS CAN domain.";
+CM_ BO_ 493 "Comm_233: Rear-right side radar input frame from SIL stimulus into ADAS CAN domain.";
+CM_ BO_ 480 "ADAS runtime: diagnostic request.";
+CM_ BO_ 481 "ADAS runtime: diagnostic response.";
+
+BA_DEF_ BO_ "GenMsgCycleTime" INT 0 10000;
+BA_DEF_DEF_ "GenMsgCycleTime" 0;
+BA_ "GenMsgCycleTime" BO_ 449 100;
+BA_ "GenMsgCycleTime" BO_ 451 100;
+BA_ "GenMsgCycleTime" BO_ 452 50;
+BA_ "GenMsgCycleTime" BO_ 518 50;
+BA_ "GenMsgCycleTime" BO_ 453 100;
+BA_ "GenMsgCycleTime" BO_ 454 100;
+BA_ "GenMsgCycleTime" BO_ 455 50;
+BA_ "GenMsgCycleTime" BO_ 456 100;
+BA_ "GenMsgCycleTime" BO_ 457 100;
+BA_ "GenMsgCycleTime" BO_ 458 100;
+BA_ "GenMsgCycleTime" BO_ 459 100;
+BA_ "GenMsgCycleTime" BO_ 460 100;
+BA_ "GenMsgCycleTime" BO_ 461 100;
+BA_ "GenMsgCycleTime" BO_ 462 100;
+BA_ "GenMsgCycleTime" BO_ 463 100;
+BA_ "GenMsgCycleTime" BO_ 464 100;
+BA_ "GenMsgCycleTime" BO_ 465 100;
+BA_ "GenMsgCycleTime" BO_ 466 100;
+BA_ "GenMsgCycleTime" BO_ 467 100;
+BA_ "GenMsgCycleTime" BO_ 468 100;
+BA_ "GenMsgCycleTime" BO_ 469 100;
+BA_ "GenMsgCycleTime" BO_ 470 100;
+BA_ "GenMsgCycleTime" BO_ 471 100;
+BA_ "GenMsgCycleTime" BO_ 472 100;
+BA_ "GenMsgCycleTime" BO_ 473 100;
+BA_ "GenMsgCycleTime" BO_ 474 100;
+BA_ "GenMsgCycleTime" BO_ 475 100;
+BA_ "GenMsgCycleTime" BO_ 476 100;
+BA_ "GenMsgCycleTime" BO_ 477 100;
+BA_ "GenMsgCycleTime" BO_ 478 100;
+BA_ "GenMsgCycleTime" BO_ 479 100;
+BA_ "GenMsgCycleTime" BO_ 486 50;
+BA_ "GenMsgCycleTime" BO_ 487 100;
+BA_ "GenMsgCycleTime" BO_ 488 100;
+BA_ "GenMsgCycleTime" BO_ 489 100;
+BA_ "GenMsgCycleTime" BO_ 490 100;
+BA_ "GenMsgCycleTime" BO_ 491 100;
+BA_ "GenMsgCycleTime" BO_ 492 100;
+BA_ "GenMsgCycleTime" BO_ 493 100;
+BA_ "GenMsgCycleTime" BO_ 480 0;
+BA_ "GenMsgCycleTime" BO_ 481 0;
+
+VAL_ 452 DecelAssistReq 0 "OFF" 1 "ON";
+VAL_ 452 DriverReleaseReason 0 "NONE" 1 "STEER" 2 "BRAKE" 3 "FAILSAFE";
+VAL_ 518 timeoutClear 0 "NoClear" 1 "Clear";
+VAL_ 453 ObjectTrackValid 0 "INVALID" 1 "VALID";
+VAL_ 453 IntersectionConflict 0 "NO" 1 "YES";
+VAL_ 453 MergeCutIn 0 "NO" 1 "YES";
+VAL_ 454 ObjectTrackValid 0 "INVALID" 1 "VALID";
+VAL_ 455 IntersectionConflict 0 "NO" 1 "YES";
+VAL_ 455 MergeCutIn 0 "NO" 1 "YES";
+VAL_ 456 LaneDepartureWarn 0 "OFF" 1 "WARN";
+VAL_ 456 LaneKeepAssistActive 0 "OFF" 1 "ON";
+VAL_ 457 AebRequest 0 "OFF" 1 "ON";
+VAL_ 458 BcwWarnLeft 0 "OFF" 1 "ON";
+VAL_ 458 BcwWarnRight 0 "OFF" 1 "ON";
+VAL_ 459 LcaReady 0 "NO" 1 "YES";
+VAL_ 459 LcaWarn 0 "OFF" 1 "ON";
+VAL_ 460 SpasActive 0 "OFF" 1 "ON";
+VAL_ 460 SteeringAssistReq 0 "OFF" 1 "ON";
+VAL_ 461 RspaReady 0 "NO" 1 "YES";
+VAL_ 461 BrakeHoldReq 0 "OFF" 1 "ON";
+VAL_ 462 AvmActive 0 "OFF" 1 "ON";
+VAL_ 463 ObjectDetected 0 "NO" 1 "YES";
+VAL_ 463 LaneModelValid 0 "NO" 1 "YES";
+VAL_ 464 ObjectDetected 0 "NO" 1 "YES";
+VAL_ 465 SideObjectDetected 0 "NO" 1 "YES";
+VAL_ 466 SideObjectDetected 0 "NO" 1 "YES";
+VAL_ 467 ParkAssistActive 0 "OFF" 1 "ON";
+VAL_ 467 AudibleWarn 0 "OFF" 1 "ON";
+VAL_ 468 DriverMonitorActive 0 "OFF" 1 "ON";
+VAL_ 468 FatigueWarn 0 "OFF" 1 "ON";
+VAL_ 469 OccupantDetected 0 "NO" 1 "YES";
+VAL_ 469 ChildPresenceWarn 0 "OFF" 1 "ON";
+VAL_ 469 OccupantAlertActive 0 "OFF" 1 "ON";
+VAL_ 470 SideObjectDetected 0 "NO" 1 "YES";
+VAL_ 471 SideObjectDetected 0 "NO" 1 "YES";
+VAL_ 472 AebArmed 0 "OFF" 1 "ON";
+VAL_ 472 StopReq 0 "OFF" 1 "ON";
+VAL_ 473 ParkMasterActive 0 "OFF" 1 "ON";
+VAL_ 473 AutoManeuverReady 0 "NO" 1 "YES";
+VAL_ 474 LanePreviewValid 0 "NO" 1 "YES";
+VAL_ 475 RearObjectDetected 0 "NO" 1 "YES";
+VAL_ 475 LaneChangeBlock 0 "OFF" 1 "ON";
+VAL_ 476 SurroundActive 0 "OFF" 1 "ON";
+VAL_ 476 AutoParkReady 0 "NO" 1 "YES";
+VAL_ 476 SteeringAssistReq 0 "OFF" 1 "ON";
+VAL_ 476 BrakeHoldReq 0 "OFF" 1 "ON";
+VAL_ 477 HighwayPilotReady 0 "NO" 1 "YES";
+VAL_ 477 LongCtrlActive 0 "OFF" 1 "ON";
+VAL_ 477 LatCtrlActive 0 "OFF" 1 "ON";
+VAL_ 477 DriverMonitorReq 0 "NO" 1 "YES";
+VAL_ 478 TargetDetected 0 "NO" 1 "YES";
+VAL_ 479 TrailerDetected 0 "NO" 1 "YES";
+VAL_ 479 StabilityAssistReq 0 "OFF" 1 "ON";
