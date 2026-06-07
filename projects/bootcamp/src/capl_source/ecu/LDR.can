@@ -1,0 +1,204 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tLidarCycle;
+  int gObjectConfidence;
+  int gObjectEventCode;
+  int gObjectTrackValid;
+  int gObjectFailSafeMode;
+  dword gObjectSafetyRxTsMs;
+  int gWarningPathStatus;
+  int gE2eHealthState;
+  int gFailSafeMode;
+  dword gFailSafeRxTsMs;
+  int gLastHealth;
+  int gLastDetected;
+  int gLastFreeSpaceClass;
+  int gLastConfidence;
+  int gLastRangeBucket;
+  int gLastPathReady;
+  int gLastObjectSafetyInputStale;
+}
+
+int lidarPathReady()
+{
+  if (ethIsRecentTick(gFailSafeRxTsMs, 300) == 0)
+  {
+    return 0;
+  }
+  if (gWarningPathStatus >= 2 || gE2eHealthState == 0 || gFailSafeMode >= 2)
+  {
+    return 0;
+  }
+  return 1;
+}
+
+void traceLidarInputHealth(int objectSafetyInputStale)
+{
+  if (objectSafetyInputStale != gLastObjectSafetyInputStale)
+  {
+    if (objectSafetyInputStale == 1)
+    {
+      write("[LDR] object-safety input stale");
+    }
+    else
+    {
+      write("[LDR] object-safety input restored");
+    }
+    gLastObjectSafetyInputStale = objectSafetyInputStale;
+  }
+}
+
+void publishLidarState()
+{
+  message frmLidarStateMsg mLidar;
+  int objectSafetyInputStale;
+  int health;
+  int targetDetected;
+  int freeSpaceClass;
+  int rangeBucket;
+  int objectConfidence;
+  int objectEventCode;
+  int objectTrackValid;
+  int objectFailSafeMode;
+  int pathReady;
+
+  objectSafetyInputStale = (ethIsRecentTick(gObjectSafetyRxTsMs, 300) == 1) ? 0 : 1;
+  traceLidarInputHealth(objectSafetyInputStale);
+
+  objectConfidence = gObjectConfidence;
+  objectEventCode = gObjectEventCode;
+  objectTrackValid = gObjectTrackValid;
+  objectFailSafeMode = gObjectFailSafeMode;
+  pathReady = lidarPathReady();
+
+  if (objectSafetyInputStale == 1)
+  {
+    objectConfidence = 0;
+    objectEventCode = 0;
+    objectTrackValid = 0;
+    objectFailSafeMode = 0;
+  }
+
+  targetDetected = clampRange(objectTrackValid, 0, 1);
+
+  if (pathReady == 0 || objectSafetyInputStale == 1 || objectFailSafeMode >= 2)
+  {
+    health = 0;
+  }
+  else if (objectTrackValid == 1 && objectConfidence < 40)
+  {
+    health = 1;
+  }
+  else
+  {
+    health = 2;
+  }
+
+  if (targetDetected == 1 && objectConfidence >= 80)
+  {
+    freeSpaceClass = 2;
+  }
+  else if (targetDetected == 1 && objectConfidence >= 40)
+  {
+    freeSpaceClass = 1;
+  }
+  else
+  {
+    freeSpaceClass = 0;
+  }
+
+  rangeBucket = clampRange((objectEventCode & 0xFF), 0, 255);
+  if (pathReady == 0)
+  {
+    health = 0;
+    targetDetected = 0;
+    freeSpaceClass = 0;
+    objectConfidence = 0;
+    rangeBucket = 0;
+  }
+
+  mLidar.LidarHealth = clampRange(health, 0, 3);
+  mLidar.TargetDetected = targetDetected;
+  mLidar.FreeSpaceClass = clampRange(freeSpaceClass, 0, 3);
+  mLidar.Confidence = clampRange(objectConfidence, 0, 100);
+  mLidar.RangeBucket = rangeBucket;
+  output(mLidar);
+
+  if (pathReady != gLastPathReady ||
+      health != gLastHealth ||
+      targetDetected != gLastDetected ||
+      freeSpaceClass != gLastFreeSpaceClass ||
+      objectConfidence != gLastConfidence ||
+      rangeBucket != gLastRangeBucket)
+  {
+    write("[LDR] path=%d health=%d target=%d free=%d conf=%d range=%d failSafe=%d",
+          pathReady,
+          health,
+          targetDetected,
+          freeSpaceClass,
+          objectConfidence,
+          rangeBucket,
+          objectFailSafeMode);
+    gLastPathReady = pathReady;
+    gLastHealth = health;
+    gLastDetected = targetDetected;
+    gLastFreeSpaceClass = freeSpaceClass;
+    gLastConfidence = objectConfidence;
+    gLastRangeBucket = rangeBucket;
+  }
+}
+
+on start
+{
+  gObjectConfidence = 0;
+  gObjectEventCode = 0;
+  gObjectTrackValid = 0;
+  gObjectFailSafeMode = 0;
+  gObjectSafetyRxTsMs = 0;
+  gWarningPathStatus = 1;
+  gE2eHealthState = 1;
+  gFailSafeMode = 1;
+  gFailSafeRxTsMs = 0;
+  gLastHealth = -1;
+  gLastDetected = -1;
+  gLastFreeSpaceClass = -1;
+  gLastConfidence = -1;
+  gLastRangeBucket = -1;
+  gLastPathReady = -1;
+  gLastObjectSafetyInputStale = 0;
+  setTimer(tLidarCycle, 100);
+  write("[LDR] start");
+}
+
+on timer tLidarCycle
+{
+  publishLidarState();
+  setTimer(tLidarCycle, 100);
+}
+
+on message frmLidarInputMsg
+{
+  gObjectTrackValid = clampRange((int)this.TargetDetected, 0, 1);
+  gObjectConfidence = clampRange((int)this.Confidence, 0, 100);
+  gObjectEventCode = clampRange((int)this.EventCode, 0, 255);
+  gObjectSafetyRxTsMs = getSimulationTimeMs();
+}
+
+on message frmAdasDomainStateMsg
+{
+  gWarningPathStatus = clampRange((int)this.WarningPathStatus, 0, 2);
+  gE2eHealthState = clampRange((int)this.E2eHealthState, 0, 2);
+  gFailSafeMode = clampRange((int)this.FailSafeMode, 0, 2);
+  gObjectFailSafeMode = gFailSafeMode;
+  gFailSafeRxTsMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tLidarCycle);
+}

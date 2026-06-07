@@ -1,0 +1,214 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tRoadPreviewCycle;
+  int gCameraHealth;
+  int gObjectDetected;
+  int gLaneModelValid;
+  int gConfidence;
+  int gNavRouteClass;
+  int gNavSpeedLimit;
+  dword gFcamRxMs;
+  dword gNavRxMs;
+  int gLastFcamInputStale;
+  int gLastNavInputStale;
+  int gLastHealth;
+  int gLastLanePreview;
+  int gLastZonePreview;
+  int gLastSpeedLimit;
+  int gLastConfidence;
+}
+
+int fcamLeaseWindowMs()
+{
+  return 300;
+}
+
+int fcamHoldWindowMs()
+{
+  return 1200;
+}
+
+int navLeaseWindowMs()
+{
+  return 300;
+}
+
+int navHoldWindowMs()
+{
+  return 1500;
+}
+
+void traceRpcInputHealth(int fcamInputStale, int navInputStale)
+{
+  if (fcamInputStale != gLastFcamInputStale)
+  {
+    if (fcamInputStale == 1)
+    {
+      write("[RPC] fcam input stale");
+    }
+    else
+    {
+      write("[RPC] fcam input restored");
+    }
+    gLastFcamInputStale = fcamInputStale;
+  }
+
+  if (navInputStale != gLastNavInputStale)
+  {
+    if (navInputStale == 1)
+    {
+      write("[RPC] nav input stale");
+    }
+    else
+    {
+      write("[RPC] nav input restored");
+    }
+    gLastNavInputStale = navInputStale;
+  }
+}
+
+void publishRoadPreviewState()
+{
+  message frmRoadPreviewCameraStateMsg mPreview;
+  int fcamInputStale;
+  int navInputStale;
+  int fcamInputExpired;
+  int navInputExpired;
+  int zonePreview;
+  int speedLimit;
+  int cameraHealth;
+  int objectDetected;
+  int laneModelValid;
+  int confidence;
+  int previewHealth;
+
+  fcamInputStale = (ethIsRecentTick(gFcamRxMs, fcamLeaseWindowMs()) == 1) ? 0 : 1;
+  navInputStale = (ethIsRecentTick(gNavRxMs, navLeaseWindowMs()) == 1) ? 0 : 1;
+  fcamInputExpired = (ethIsRecentTick(gFcamRxMs, fcamHoldWindowMs()) == 1) ? 0 : 1;
+  navInputExpired = (ethIsRecentTick(gNavRxMs, navHoldWindowMs()) == 1) ? 0 : 1;
+  traceRpcInputHealth(fcamInputStale, navInputStale);
+
+  zonePreview = gNavRouteClass;
+  speedLimit = gNavSpeedLimit;
+  cameraHealth = gCameraHealth;
+  objectDetected = gObjectDetected;
+  laneModelValid = gLaneModelValid;
+  confidence = gConfidence;
+  if (fcamInputExpired == 1)
+  {
+    cameraHealth = 0;
+    objectDetected = 0;
+    laneModelValid = 0;
+    confidence = 0;
+  }
+  else if (fcamInputStale == 1)
+  {
+    if (cameraHealth > 0)
+    {
+      cameraHealth = cameraHealth - 1;
+    }
+    if (confidence > 20)
+    {
+      confidence = confidence - 20;
+    }
+  }
+  if (navInputExpired == 1)
+  {
+    zonePreview = 0;
+    speedLimit = 30;
+  }
+  else if (navInputStale == 1 && confidence > 10)
+  {
+    confidence = confidence - 10;
+  }
+
+  previewHealth = 0;
+  if (cameraHealth >= 2 && confidence >= 60)
+  {
+    previewHealth = 2;
+  }
+  else if (cameraHealth >= 1 && confidence >= 30)
+  {
+    previewHealth = 1;
+  }
+
+  mPreview.PreviewHealth = clampRange(previewHealth, 0, 3);
+  mPreview.LanePreviewValid = clampRange(laneModelValid, 0, 1);
+  mPreview.ZonePreview = clampRange(zonePreview, 0, 7);
+  mPreview.SpeedLimit = speedLimit;
+  mPreview.PreviewConfidence = clampRange(confidence, 0, 100);
+  output(mPreview);
+
+  if (previewHealth != gLastHealth ||
+      laneModelValid != gLastLanePreview ||
+      zonePreview != gLastZonePreview ||
+      speedLimit != gLastSpeedLimit ||
+      confidence != gLastConfidence)
+  {
+    write("[RPC] health=%d lane=%d zone=%d speedLimit=%d conf=%d obj=%d",
+          previewHealth,
+          laneModelValid,
+          zonePreview,
+          speedLimit,
+          confidence,
+          objectDetected);
+    gLastHealth = previewHealth;
+    gLastLanePreview = laneModelValid;
+    gLastZonePreview = zonePreview;
+    gLastSpeedLimit = speedLimit;
+    gLastConfidence = confidence;
+  }
+}
+
+on start
+{
+  gCameraHealth = 0;
+  gObjectDetected = 0;
+  gLaneModelValid = 0;
+  gConfidence = 0;
+  gNavRouteClass = 0;
+  gNavSpeedLimit = 30;
+  gFcamRxMs = 0;
+  gNavRxMs = 0;
+  gLastFcamInputStale = 0;
+  gLastNavInputStale = 0;
+  gLastHealth = -1;
+  gLastLanePreview = -1;
+  gLastZonePreview = -1;
+  gLastSpeedLimit = -1;
+  gLastConfidence = -1;
+  setTimer(tRoadPreviewCycle, 100);
+  write("[RPC] start");
+}
+
+on timer tRoadPreviewCycle
+{
+  publishRoadPreviewState();
+  setTimer(tRoadPreviewCycle, 100);
+}
+
+on message frmFcamStateMsg
+{
+  gCameraHealth = clampRange((int)this.CameraHealth, 0, 3);
+  gObjectDetected = clampRange((int)this.ObjectDetected, 0, 1);
+  gLaneModelValid = clampRange((int)this.LaneModelValid, 0, 1);
+  gConfidence = clampRange((int)this.Confidence, 0, 100);
+  gFcamRxMs = getSimulationTimeMs();
+}
+
+on message frmNavModuleStateMsg
+{
+  gNavRouteClass = clampRange((int)this.NavRouteClass, 0, 3);
+  gNavSpeedLimit = clampRange((int)this.NavSpeedLimit, 0, 255);
+  gNavRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tRoadPreviewCycle);
+}

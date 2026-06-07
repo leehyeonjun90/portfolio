@@ -1,0 +1,141 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tMirrorCycle;
+  int gTurnLampState;
+  int gDriveState;
+  dword gLampControlRxMs;
+  dword gVehicleRxMs;
+  int gLastLampInputStale;
+  int gLastVehicleInputStale;
+  int gLastFoldState;
+  int gLastHeatState;
+  int gLastAdjustAxis;
+}
+
+void traceMirrorInputHealth(int lampInputStale, int vehicleInputStale)
+{
+  if (lampInputStale != gLastLampInputStale)
+  {
+    if (lampInputStale == 1)
+    {
+      write("[MIR] lamp-control input stale");
+    }
+    else
+    {
+      write("[MIR] lamp-control input restored");
+    }
+    gLastLampInputStale = lampInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[MIR] vehicle input stale");
+    }
+    else
+    {
+      write("[MIR] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+on start
+{
+  gTurnLampState = 0;
+  gDriveState = 0;
+  gLampControlRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastLampInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastFoldState = -1;
+  gLastHeatState = -1;
+  gLastAdjustAxis = -1;
+  setTimer(tMirrorCycle, 100);
+  write("[MIR] start");
+}
+
+on timer tMirrorCycle
+{
+  message frmMirrorStateMsg mMirror;
+  int lampInputStale;
+  int vehicleInputStale;
+  int driveState;
+  int turnLampState;
+  int foldState;
+  int heatState;
+  int adjustAxis;
+
+  lampInputStale = (ethIsRecentTick(gLampControlRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  traceMirrorInputHealth(lampInputStale, vehicleInputStale);
+
+  driveState = gDriveState;
+  turnLampState = gTurnLampState;
+  if (lampInputStale == 1)
+  {
+    turnLampState = 0;
+  }
+  if (vehicleInputStale == 1)
+  {
+    driveState = 3;
+  }
+
+  foldState = (driveState == 0) ? 1 : 0;
+  heatState = 0;
+  adjustAxis = 0;
+  if (turnLampState == 1)
+  {
+    adjustAxis = 1;
+  }
+  else if (turnLampState == 2)
+  {
+    adjustAxis = 2;
+  }
+
+  mMirror.MirrorFoldState = clampRange(foldState, 0, 3);
+  mMirror.MirrorHeatState = clampRange(heatState, 0, 1);
+  mMirror.MirrorAdjustAxis = clampRange(adjustAxis, 0, 3);
+  output(mMirror);
+
+  if (mMirror.MirrorFoldState != gLastFoldState ||
+      mMirror.MirrorHeatState != gLastHeatState ||
+      mMirror.MirrorAdjustAxis != gLastAdjustAxis)
+  {
+    write("[MIR] fold=%d heat=%d axis=%d turn=%d drive=%d",
+          mMirror.MirrorFoldState,
+          mMirror.MirrorHeatState,
+          mMirror.MirrorAdjustAxis,
+          turnLampState,
+          driveState);
+    gLastFoldState = mMirror.MirrorFoldState;
+    gLastHeatState = mMirror.MirrorHeatState;
+    gLastAdjustAxis = mMirror.MirrorAdjustAxis;
+  }
+
+  setTimer(tMirrorCycle, 100);
+}
+
+on message frmLampControlMsg
+{
+  gTurnLampState = clampRange((int)this.TurnLampState, 0, 3);
+  gLampControlRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tMirrorCycle);
+}
+

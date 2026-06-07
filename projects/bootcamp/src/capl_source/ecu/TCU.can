@@ -1,0 +1,240 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tTransCycle;
+  int gGearInput;
+  int gGearState;
+  int gDriveMode;
+  int gVehicleSpeed;
+  dword gGearRxMs;
+  dword gDriveModeRxMs;
+  dword gVehicleRxMs;
+  int gLastGearInputStale;
+  int gLastDriveModeInputStale;
+  int gLastVehicleInputStale;
+  int gLastGearState;
+  int gShiftCounter;
+  int gShiftTargetGear;
+}
+
+int deriveManualGearStateFromDriveState(int driveState)
+{
+  driveState = clampRange(driveState, 0, 3);
+  if (driveState == 1)
+  {
+    return 1;
+  }
+  if (driveState == 2)
+  {
+    return 2;
+  }
+  if (driveState >= 3)
+  {
+    return 3;
+  }
+  return 0;
+}
+
+void traceTcuInputHealth(int gearInputStale, int driveModeInputStale, int vehicleInputStale)
+{
+  if (gearInputStale != gLastGearInputStale)
+  {
+    if (gearInputStale == 1)
+    {
+      write("[TCU] gear input stale");
+    }
+    else
+    {
+      write("[TCU] gear input restored");
+    }
+    gLastGearInputStale = gearInputStale;
+  }
+
+  if (driveModeInputStale != gLastDriveModeInputStale)
+  {
+    if (driveModeInputStale == 1)
+    {
+      write("[TCU] drive-mode input stale");
+    }
+    else
+    {
+      write("[TCU] drive-mode input restored");
+    }
+    gLastDriveModeInputStale = driveModeInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[TCU] vehicle input stale");
+    }
+    else
+    {
+      write("[TCU] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+on start
+{
+  gGearInput    = 0;
+  gGearState    = 0;
+  gDriveMode    = 0;
+  gVehicleSpeed = 0;
+  gGearRxMs     = 0;
+  gDriveModeRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastGearInputStale = 0;
+  gLastDriveModeInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastGearState = -1;
+  gShiftCounter  = 0;
+  gShiftTargetGear = 0;
+  setTimer(tTransCycle, 100);
+  write("[TCU] start");
+}
+
+on message frmGearStateMsg
+{
+  gGearInput = clampRange((int)this.GearInput, 0, 7);
+  gGearState = clampRange((int)this.GearState, 0, 7);
+  gGearRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleModeMsg
+{
+  gDriveMode = clampRange((int)this.DriveMode, 0, 7);
+  gDriveModeRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on timer tTransCycle
+{
+  message frmTransmissionTempMsg mTemp;
+  message frmTransShiftStateMsg  mShift;
+  int gearInputStale;
+  int driveModeInputStale;
+  int vehicleInputStale;
+  int gearState;
+  int driveMode;
+  int manualMode;
+  int transOilTemp;
+  int clutchTemp;
+  int shiftState;
+  int shiftSlip;
+  int speed;
+
+  gearInputStale = (ethIsRecentTick(gGearRxMs, 300) == 1) ? 0 : 1;
+  driveModeInputStale = (ethIsRecentTick(gDriveModeRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  traceTcuInputHealth(gearInputStale, driveModeInputStale, vehicleInputStale);
+
+  gearState = gGearState;
+  driveMode = gDriveMode;
+  manualMode = (((int)@Test::scenarioActiveId) == 0) ? 1 : 0;
+  if (gearInputStale == 1)
+  {
+    gearState = 0;
+  }
+  if (driveModeInputStale == 1)
+  {
+    driveMode = 0;
+  }
+
+  speed = gVehicleSpeed;
+  if (vehicleInputStale == 1)
+  {
+    speed = 0;
+  }
+
+  if (manualMode == 1)
+  {
+    gearState = deriveManualGearStateFromDriveState((int)@Chassis::driveState);
+  }
+
+  /* Oil temp: warm when gear engaged, higher under sport mode */
+  transOilTemp = 60;
+  if (gearState > 0)
+  {
+    transOilTemp = 75 + (speed / 20);
+    if (driveMode == 2) transOilTemp = transOilTemp + 10;
+  }
+  if (transOilTemp > 255) transOilTemp = 255;
+
+  /* Clutch temp rises during active shift transitions */
+  clutchTemp = 50;
+  if (gShiftCounter > 0)
+  {
+    clutchTemp = 100 + gShiftCounter * 5;
+    gShiftCounter = gShiftCounter - 1;
+  }
+  if (clutchTemp > 255) clutchTemp = 255;
+
+  mTemp.TransOilTemp = transOilTemp;
+  mTemp.ClutchTemp   = clutchTemp;
+  output(mTemp);
+
+  /* ShiftState: 0=Idle 1=PreShift 2=Shifting 3=PostShift */
+  if (gearInputStale == 1)
+  {
+    shiftState = 0;
+    shiftSlip = 0;
+    gShiftCounter = 0;
+    gLastGearState = -1;
+    gShiftTargetGear = 0;
+  }
+  else if (gearState != gLastGearState && gLastGearState >= 0)
+  {
+    gShiftCounter = 6;
+    gShiftTargetGear = gearState;
+    write("[TCU] shift gear=%d->%d", gLastGearState, gearState);
+    gLastGearState = gearState;
+  }
+
+  shiftState = 0;
+  shiftSlip = 0;
+  if (gShiftCounter > 0)
+  {
+    if (gShiftCounter >= 5)
+    {
+      shiftState = 1;
+      shiftSlip = 4;
+    }
+    else if (gShiftCounter >= 2)
+    {
+      shiftState = 2;
+      shiftSlip = 10 + ((driveMode == 2) ? 4 : 0);
+    }
+    else
+    {
+      shiftState = 3;
+      shiftSlip = 2;
+    }
+    clutchTemp = 95 + (gShiftCounter * 7) + ((driveMode == 2) ? 10 : 0);
+    if (clutchTemp > 255) clutchTemp = 255;
+    gShiftCounter = gShiftCounter - 1;
+  }
+
+  mShift.ShiftState      = shiftState & 0x7;
+  mShift.ShiftTargetGear = ((shiftState > 0) ? gShiftTargetGear : gearState) & 0x7;
+  mShift.ShiftSlip       = shiftSlip;
+  output(mShift);
+
+  if (gearInputStale == 0 && gShiftCounter == 0)
+  {
+    gLastGearState = gearState;
+  }
+
+  setTimer(tTransCycle, 100);
+}

@@ -1,0 +1,157 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tCarpayCycle;
+  int gServiceMode;
+  int gSignalBars;
+  int gDriveState;
+  dword gTmuServiceRxMs;
+  dword gVehicleRxMs;
+  int gLastTmuInputStale;
+  int gLastVehicleInputStale;
+  int gLastPayState;
+  int gLastWallet;
+  int gLastReceipt;
+  int gLastQuality;
+}
+
+void traceCpayInputHealth(int tmuInputStale, int vehicleInputStale)
+{
+  if (tmuInputStale != gLastTmuInputStale)
+  {
+    if (tmuInputStale == 1)
+    {
+      write("[CPAY] tmu input stale");
+    }
+    else
+    {
+      write("[CPAY] tmu input restored");
+    }
+    gLastTmuInputStale = tmuInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[CPAY] vehicle input stale");
+    }
+    else
+    {
+      write("[CPAY] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+on start
+{
+  gServiceMode = 0;
+  gSignalBars = 0;
+  gDriveState = 0;
+  gTmuServiceRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastTmuInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastPayState = -1;
+  gLastWallet = -1;
+  gLastReceipt = -1;
+  gLastQuality = -1;
+  setTimer(tCarpayCycle, 100);
+  write("[CPAY] start");
+}
+
+on message frmTmuServiceStateMsg
+{
+  gServiceMode = clampRange((int)this.TmuServiceMode, 0, 3);
+  gSignalBars = clampRange((int)this.SignalBars, 0, 15);
+  gTmuServiceRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on timer tCarpayCycle
+{
+  message frmCarpayCtrlStateMsg mPay;
+  int tmuInputStale;
+  int vehicleInputStale;
+  int serviceMode;
+  int signalBars;
+  int driveState;
+  int paymentState;
+  int walletLinkState;
+  int receiptPending;
+  int serviceQuality;
+
+  tmuInputStale = (ethIsRecentTick(gTmuServiceRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  traceCpayInputHealth(tmuInputStale, vehicleInputStale);
+
+  serviceMode = gServiceMode;
+  signalBars = gSignalBars;
+  driveState = gDriveState;
+  if (tmuInputStale == 1)
+  {
+    serviceMode = 0;
+    signalBars = 0;
+  }
+  if (vehicleInputStale == 1)
+  {
+    driveState = 3;
+  }
+
+  walletLinkState = (serviceMode > 0 && signalBars >= 2) ? 1 : 0;
+  paymentState = 0;
+  if (walletLinkState == 1)
+  {
+    if (driveState == 0 && serviceMode == 1 && signalBars >= 4)
+    {
+      paymentState = 2;
+    }
+    else
+    {
+      paymentState = 1;
+    }
+  }
+  receiptPending = (paymentState == 2) ? 1 : 0;
+  serviceQuality = clampRange(signalBars * 20, 0, 100);
+
+  mPay.PaymentState = clampRange(paymentState, 0, 7);
+  mPay.WalletLinkState = clampRange(walletLinkState, 0, 3);
+  mPay.ReceiptPending = clampRange(receiptPending, 0, 1);
+  mPay.ServiceQuality = serviceQuality;
+  output(mPay);
+
+  if (mPay.PaymentState != gLastPayState ||
+      mPay.WalletLinkState != gLastWallet ||
+      mPay.ReceiptPending != gLastReceipt ||
+      mPay.ServiceQuality != gLastQuality)
+  {
+    write("[CPAY] pay=%d wallet=%d receipt=%d quality=%d bars=%d",
+          mPay.PaymentState,
+          mPay.WalletLinkState,
+          mPay.ReceiptPending,
+          mPay.ServiceQuality,
+          signalBars);
+    gLastPayState = mPay.PaymentState;
+    gLastWallet = mPay.WalletLinkState;
+    gLastReceipt = mPay.ReceiptPending;
+    gLastQuality = mPay.ServiceQuality;
+  }
+
+  setTimer(tCarpayCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tCarpayCycle);
+}
+

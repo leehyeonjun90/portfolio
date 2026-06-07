@@ -1,0 +1,763 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tVcuCycle;
+  long gEthTxSocket;
+  dword gEthTargetIp;
+  int gSpeed;
+  int gAccelPedal;
+  int gBrakePedal;
+  int gIgnitionState;
+  int gEngineState;
+  int gGearInput;
+  int gGearState;
+  int gDriveMode;
+  int gRoutingPolicy;
+  int gBoundaryStatus;
+  int gFailSafeMode;
+  int gEmergencyContext;
+  int gSpeedLimitNorm;
+  int gNavSpeedLimit;
+  int gWheelSpeedHint;
+  int gPtAliveCnt;
+  int gManualDriveStateTarget;
+  int gManualVehicleSpeedTarget;
+  int gLastPublishedDriveState;
+  int gLastPublishedVehicleSpeed;
+  dword gPedalRxMs;
+  dword gIgnitionRxMs;
+  dword gGearRxMs;
+  dword gNavStateRxMs;
+  dword gWheelSpeedRxMs;
+  int gLastPedalInputStale;
+  int gLastIgnitionInputStale;
+  int gLastGearInputStale;
+}
+
+int getVcuTxPort()
+{
+  return ethBackbonePort() + 2;
+}
+
+dword getVcuLocalIp()
+{
+  return IpGetAddressAsNumber("192.168.1.20");
+}
+
+int deriveDriveMode(int driveState, int speed, int accelPedal, int brakePedal)
+{
+  if (driveState == 0)
+  {
+    return 0;
+  }
+  if (brakePedal >= 25 && speed <= 30)
+  {
+    return 3;
+  }
+  if (accelPedal >= 60)
+  {
+    return 2;
+  }
+  if (speed >= 20 && accelPedal <= 20)
+  {
+    return 1;
+  }
+  return 0;
+}
+
+int deriveDriveState(int gearState, int currentSpeed)
+{
+  gearState = clampRange(gearState, 0, 7);
+
+  if (gearState == 1)
+  {
+    return 1;
+  }
+  if (gearState == 2)
+  {
+    return 2;
+  }
+  if (gearState >= 3)
+  {
+    return 3;
+  }
+  if (currentSpeed > 0)
+  {
+    return 3;
+  }
+  return 0;
+}
+
+int deriveManualPowertrainState(int ignitionCmd, int gearState, int speed, int accelPedal)
+{
+  if (ignitionCmd > 0 || gearState > 0 || speed > 0 || accelPedal > 0)
+  {
+    return 2;
+  }
+  return 0;
+}
+
+int deriveTorqueRequest(int driveMode, int accelPedal, int speedLimit)
+{
+  int torqueRequest;
+
+  torqueRequest = clampRange(accelPedal * 2, 0, 255);
+  if (driveMode == 2 && speedLimit >= 100 && torqueRequest < 120)
+  {
+    torqueRequest = 120;
+  }
+  return torqueRequest;
+}
+
+int deriveTargetSpeed(int currentSpeed,
+                      int gearState,
+                      int accelPedal,
+                      int brakePedal,
+                      int driveMode,
+                      int speedLimit)
+{
+  int targetSpeed;
+
+  targetSpeed = currentSpeed;
+  if (gearState == 0 || gearState == 2)
+  {
+    return 0;
+  }
+
+  if (gearState == 1)
+  {
+    targetSpeed = 4 + (accelPedal / 6);
+    if (brakePedal >= 20)
+    {
+      targetSpeed = 0;
+    }
+    return clampRange(targetSpeed, 0, 18);
+  }
+
+  if (accelPedal > 0)
+  {
+    targetSpeed = accelPedal * 2;
+    if (currentSpeed < 15 && accelPedal >= 30)
+    {
+      targetSpeed = targetSpeed + 6;
+    }
+    if (driveMode == 2)
+    {
+      targetSpeed = targetSpeed + 10 + (accelPedal / 10);
+    }
+    else if (driveMode == 1)
+    {
+      targetSpeed = targetSpeed - 4;
+    }
+    if (speedLimit > 0 && speedLimit < 255 && targetSpeed > speedLimit + 25)
+    {
+      targetSpeed = speedLimit + 25;
+    }
+  }
+  else if (brakePedal > 20)
+  {
+    targetSpeed = 0;
+  }
+  else if (brakePedal > 0)
+  {
+    targetSpeed = currentSpeed - (brakePedal / 2);
+  }
+  else if (currentSpeed > 0)
+  {
+    targetSpeed = currentSpeed - ((driveMode == 1) ? 1 : 2);
+  }
+
+  return clampRange(targetSpeed, 0, 255);
+}
+
+int deriveAccelStep(int gearState, int driveMode, int accelPedal, int currentSpeed)
+{
+  int step;
+
+  step = 2;
+  if (accelPedal > 0)
+  {
+    step = 1 + (accelPedal / 25);
+  }
+  if (currentSpeed < 12 && accelPedal >= 30)
+  {
+    step = step + 2;
+  }
+  if (driveMode == 2 && accelPedal >= 40)
+  {
+    step = step + 1;
+  }
+  if (gearState == 1 && step > 3)
+  {
+    step = 3;
+  }
+
+  return clampRange(step, 1, 12);
+}
+
+int deriveDecelStep(int gearState, int brakePedal, int currentSpeed)
+{
+  int step;
+
+  if (currentSpeed <= 0)
+  {
+    return 0;
+  }
+
+  step = 2 + (brakePedal / 8);
+  if (gearState == 0 || gearState == 2)
+  {
+    step = step + 2;
+  }
+  if (brakePedal >= 40)
+  {
+    step = step + 4;
+  }
+
+  return clampRange(step, 2, 18);
+}
+
+int deriveEnergyFlowMode(int driveState, int accelPedal, int brakePedal)
+{
+  if (driveState == 0)
+  {
+    return 0;
+  }
+  if (brakePedal >= 10)
+  {
+    return 2;
+  }
+  if (accelPedal > 0)
+  {
+    return 1;
+  }
+  return 1;
+}
+
+int deriveRegenLevel(int driveMode, int brakePedal)
+{
+  if (brakePedal >= 40)
+  {
+    return 12;
+  }
+  if (brakePedal >= 20)
+  {
+    return 8;
+  }
+  if (brakePedal >= 5)
+  {
+    return 4;
+  }
+  if (driveMode == 3)
+  {
+    return 6;
+  }
+  if (driveMode == 1)
+  {
+    return 3;
+  }
+  return 2;
+}
+
+int derivePowerBalance(int driveMode, int accelPedal, int brakePedal)
+{
+  if (brakePedal >= 20)
+  {
+    return 40;
+  }
+  if (driveMode == 2 || accelPedal >= 60)
+  {
+    return 60;
+  }
+  if (driveMode == 1)
+  {
+    return 45;
+  }
+  if (driveMode == 3)
+  {
+    return 55;
+  }
+  return 50;
+}
+
+void traceVcuInputHealth(int pedalInputStale, int ignitionInputStale, int gearInputStale)
+{
+  if (pedalInputStale != gLastPedalInputStale)
+  {
+    if (pedalInputStale == 1)
+    {
+      write("[VCU] pedal input stale");
+    }
+    else
+    {
+      write("[VCU] pedal input restored");
+    }
+    gLastPedalInputStale = pedalInputStale;
+  }
+
+  if (ignitionInputStale != gLastIgnitionInputStale)
+  {
+    if (ignitionInputStale == 1)
+    {
+      write("[VCU] ignition input stale");
+    }
+    else
+    {
+      write("[VCU] ignition input restored");
+    }
+    gLastIgnitionInputStale = ignitionInputStale;
+  }
+
+  if (gearInputStale != gLastGearInputStale)
+  {
+    if (gearInputStale == 1)
+    {
+      write("[VCU] gear input stale");
+    }
+    else
+    {
+      write("[VCU] gear input restored");
+    }
+    gLastGearInputStale = gearInputStale;
+  }
+}
+
+void publishBackboneVehicleState(int vehicleSpeed, int driveState)
+{
+  char frame[4];
+
+  driveState = clampRange(driveState, 0, 3);
+  vehicleSpeed = clampRange(vehicleSpeed, 0, 255);
+  if (gEthTxSocket == ethInvalidSocket())
+  {
+    return;
+  }
+
+  ethInitFrame(frame, ethMsgVehicleState(), 2);
+  ethSetU8(frame, 0, vehicleSpeed);
+  ethSetU8(frame, 1, driveState);
+  ethSendFrame(gEthTxSocket, gEthTargetIp, ethMsgVehicleState(), frame, 2);
+}
+
+on start
+{
+  gEthTxSocket = ethOpenPreferredNodeSocket(getVcuLocalIp(), getVcuTxPort());
+  gEthTargetIp = ethGetDefaultIpAddress();
+  gSpeed = 0;
+  gAccelPedal = 0;
+  gBrakePedal = 0;
+  gIgnitionState = 0;
+  gEngineState = 0;
+  gGearInput = 0;
+  gGearState = 0;
+  gDriveMode = 0;
+  gRoutingPolicy = 0;
+  gBoundaryStatus = 0;
+  gFailSafeMode = 2;
+  gEmergencyContext = 0;
+  gSpeedLimitNorm = 30;
+  gNavSpeedLimit = 30;
+  gWheelSpeedHint = 0;
+  gPtAliveCnt = 0;
+  gManualDriveStateTarget = 0;
+  gManualVehicleSpeedTarget = 0;
+  gLastPublishedDriveState = 0;
+  gLastPublishedVehicleSpeed = 0;
+  gPedalRxMs = 0;
+  gIgnitionRxMs = 0;
+  gGearRxMs = 0;
+  gNavStateRxMs = 0;
+  gWheelSpeedRxMs = 0;
+  gLastPedalInputStale = 0;
+  gLastIgnitionInputStale = 0;
+  gLastGearInputStale = 0;
+  if (gEthTxSocket == ethInvalidSocket())
+  {
+    write("[VCU] tx socket unavailable");
+  }
+  setTimer(tVcuCycle, 100);
+  write("[VCU] start");
+}
+
+on message frmPedalInputCanMsg
+{
+  gAccelPedal = clampRange((int)this.AccelPedal, 0, 100);
+  gBrakePedal = clampRange((int)this.BrakePedal, 0, 100);
+  gPedalRxMs = getSimulationTimeMs();
+}
+
+on message frmIgnitionEngineMsg
+{
+  gIgnitionState = clampRange((int)this.IgnitionState, 0, 1);
+  gEngineState = clampRange((int)this.EngineState, 0, 3);
+  gIgnitionRxMs = getSimulationTimeMs();
+}
+
+on message frmGearStateMsg
+{
+  gGearInput = clampRange((int)this.GearInput, 0, 7);
+  gGearState = clampRange((int)this.GearState, 0, 7);
+  gGearRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleModeMsg
+{
+  gDriveMode = clampRange((int)this.DriveMode, 0, 7);
+  gEngineState = clampRange((int)this.PowertrainState, 0, 255);
+}
+
+on message frmNavModuleStateMsg
+{
+  gNavSpeedLimit = clampRange((int)this.NavSpeedLimit, 0, 255);
+  gNavStateRxMs = getSimulationTimeMs();
+}
+
+on message frmWheelSpeedMsg
+{
+  gWheelSpeedHint = clampRange(((int)this.WheelSpdFL +
+                                (int)this.WheelSpdFR +
+                                (int)this.WheelSpdRL +
+                                (int)this.WheelSpdRR) / 4,
+                               0,
+                               255);
+  gWheelSpeedRxMs = getSimulationTimeMs();
+}
+
+on timer tVcuCycle
+{
+  message frmVehicleStateCanMsg mState;
+  message frmAccelStatusMsg mAccel;
+  message frmTcsStateMsg mTcs;
+  message frmWheelPulseMsg mWheelPulse;
+  message frmPowertrainGatewayMsg mPtGw;
+  message frmVehicleModeMsg mVehMode;
+  message frmPowerLimitMsg mPowerLimit;
+  message frmPowertrainHealthMsg mPtHealth;
+  message frmEnergyFlowStateMsg mEnergy;
+  message frmPowertrainCtrlAuthMsg mCtrlAuth;
+  int targetSpeed;
+  int delta;
+  int driveState;
+  int driveMode;
+  int energyFlowMode;
+  int regenLevel;
+  int powerBalance;
+  int torqueRequest;
+  int tcsActive;
+  int externalSpeedHint;
+  int externalSpeedDelta;
+  int externalSpeedOverride;
+  int pedalInputStale;
+  int ignitionInputStale;
+  int gearInputStale;
+  int manualMode;
+  int manualDriveStateCmd;
+  int manualVehicleSpeedCmd;
+  int manualCruiseState;
+  int manualCruiseSetSpeed;
+  int manualCruiseActive;
+  int manualIgnitionCmd;
+  int panelDriveStateSeam;
+  int panelVehicleSpeedSeam;
+  int cmdIgnitionCmd;
+  int cmdDriveStateCmd;
+  int cmdVehicleSpeedCmd;
+  int cmdThrottlePct;
+  int accelStep;
+  int accelPedal;
+  int brakePedal;
+  int decelStep;
+  int engineState;
+  int gearState;
+
+  if (ethIsRecentTick(gWheelSpeedRxMs, 300) == 1)
+  {
+    externalSpeedHint = clampRange(gWheelSpeedHint, 0, 255);
+  }
+  else
+  {
+    externalSpeedHint = gSpeed;
+  }
+  pedalInputStale = (ethIsRecentTick(gPedalRxMs, 300) == 1) ? 0 : 1;
+  ignitionInputStale = (ethIsRecentTick(gIgnitionRxMs, 300) == 1) ? 0 : 1;
+  gearInputStale = (ethIsRecentTick(gGearRxMs, 300) == 1) ? 0 : 1;
+  traceVcuInputHealth(pedalInputStale, ignitionInputStale, gearInputStale);
+
+  accelPedal = gAccelPedal;
+  brakePedal = gBrakePedal;
+  engineState = gEngineState;
+  gearState = gGearState;
+  if (pedalInputStale == 1)
+  {
+    accelPedal = 0;
+    brakePedal = 0;
+  }
+  if (ignitionInputStale == 1)
+  {
+    engineState = 0;
+  }
+  if (gearInputStale == 1)
+  {
+    gearState = 0;
+  }
+
+  manualMode = (((int)@Test::scenarioActiveId) == 0) ? 1 : 0;
+  manualDriveStateCmd = 0;
+  manualVehicleSpeedCmd = 0;
+  manualCruiseState = 0;
+  manualCruiseSetSpeed = 0;
+  manualCruiseActive = 0;
+  cmdIgnitionCmd = ((((int)@Cmd::ignitionCmd) > 0) ? 1 : 0);
+  cmdDriveStateCmd = clampRange((int)@Cmd::driveStateCmd, 0, 3);
+  cmdVehicleSpeedCmd = clampRange((int)@Cmd::vehicleSpeedCmd, 0, 255);
+  cmdThrottlePct = clampRange((int)@Cmd::throttlePedalPct, 0, 100);
+  manualIgnitionCmd = cmdIgnitionCmd;
+  if (manualMode == 1)
+  {
+    panelDriveStateSeam = cmdDriveStateCmd;
+    panelVehicleSpeedSeam = cmdVehicleSpeedCmd;
+    if (manualIgnitionCmd == 1 &&
+        panelDriveStateSeam != gLastPublishedDriveState)
+    {
+      gManualDriveStateTarget = panelDriveStateSeam;
+    }
+    if (manualIgnitionCmd == 1 &&
+        panelVehicleSpeedSeam != gLastPublishedVehicleSpeed)
+    {
+      gManualVehicleSpeedTarget = panelVehicleSpeedSeam;
+    }
+    if (manualIgnitionCmd == 0 && gSpeed <= 0)
+    {
+      gManualDriveStateTarget = 0;
+      gManualVehicleSpeedTarget = 0;
+    }
+    manualDriveStateCmd = clampRange(gManualDriveStateTarget, 0, 3);
+    manualVehicleSpeedCmd = clampRange(gManualVehicleSpeedTarget, 0, 255);
+    if (manualIgnitionCmd == 0 && gSpeed <= 0)
+    {
+      manualDriveStateCmd = 0;
+      manualVehicleSpeedCmd = 0;
+    }
+    manualCruiseState = clampRange((int)@Powertrain::cruiseState, 0, 3);
+    manualCruiseSetSpeed = clampRange((int)@Powertrain::cruiseSetSpeed, 0, 255);
+    accelPedal = cmdThrottlePct;
+    brakePedal = clampRange((int)@Chassis::brakePressure, 0, 100);
+    if (accelPedal > 0 || brakePedal > 0)
+    {
+      /* Direct speed seam is only an idle/manual target aid.
+         Once real pedal input arrives, owner vehicle dynamics must lead and
+         the previously latched panel speed target must be released. */
+      gManualVehicleSpeedTarget = 0;
+    }
+    gearState = manualDriveStateCmd;
+    engineState = deriveManualPowertrainState(manualIgnitionCmd,
+                                              gearState,
+                                              (manualVehicleSpeedCmd > 0) ? manualVehicleSpeedCmd : gSpeed,
+                                              accelPedal);
+    if (manualVehicleSpeedCmd > 0)
+    {
+      externalSpeedHint = manualVehicleSpeedCmd;
+    }
+    if (gearState >= 3 &&
+        brakePedal == 0 &&
+        accelPedal == 0 &&
+        manualIgnitionCmd == 1 &&
+        manualCruiseState > 0 &&
+        manualCruiseSetSpeed > 0)
+    {
+      manualCruiseActive = 1;
+    }
+    if (manualCruiseActive == 1 || gearState < 3)
+    {
+      gManualVehicleSpeedTarget = 0;
+    }
+    manualVehicleSpeedCmd = clampRange(gManualVehicleSpeedTarget, 0, 255);
+  }
+  else
+  {
+    gManualDriveStateTarget = 0;
+    gManualVehicleSpeedTarget = 0;
+  }
+
+  externalSpeedDelta = externalSpeedHint - gSpeed;
+  if (externalSpeedDelta < 0)
+  {
+    externalSpeedDelta = -externalSpeedDelta;
+  }
+  if (manualMode == 1 &&
+      manualVehicleSpeedCmd > 0 &&
+      accelPedal == 0 &&
+      brakePedal == 0 &&
+      manualCruiseActive == 0 &&
+      gearState >= 3)
+  {
+    externalSpeedOverride = 1;
+  }
+  else
+  {
+    externalSpeedOverride = ((accelPedal == 0) &&
+                             (brakePedal == 0) &&
+                             (externalSpeedDelta >= 3)) ? 1 : 0;
+  }
+
+  if (externalSpeedOverride == 1)
+  {
+    gSpeed = externalSpeedHint;
+  }
+  else
+  {
+    if (manualCruiseActive == 1)
+    {
+      targetSpeed = manualCruiseSetSpeed;
+    }
+    else
+    {
+      targetSpeed = deriveTargetSpeed(gSpeed,
+                                      gearState,
+                                      accelPedal,
+                                      brakePedal,
+                                      gDriveMode,
+                                      gSpeedLimitNorm);
+    }
+
+    delta = targetSpeed - gSpeed;
+    if (delta > 0)
+    {
+      accelStep = deriveAccelStep(gearState, gDriveMode, accelPedal, gSpeed);
+      if (delta > accelStep) delta = accelStep;
+    }
+    else if (delta < 0)
+    {
+      decelStep = deriveDecelStep(gearState, brakePedal, gSpeed);
+      if (-delta > decelStep) delta = -decelStep;
+    }
+    gSpeed = gSpeed + delta;
+    if (gSpeed < 0) gSpeed = 0;
+    if (gSpeed > 255) gSpeed = 255;
+  }
+
+  driveState = deriveDriveState(gearState, gSpeed);
+  driveMode = deriveDriveMode(driveState, gSpeed, accelPedal, brakePedal);
+  gDriveMode = clampRange(driveMode, 0, 7);
+  if (ethIsRecentTick(gNavStateRxMs, 300) == 1)
+  {
+    gSpeedLimitNorm = clampRange(gNavSpeedLimit, 0, 255);
+  }
+  else
+  {
+    gSpeedLimitNorm = 30;
+  }
+  gBoundaryStatus = clampRange((int)@CoreState::domainBoundaryStatus, 0, 1);
+  gFailSafeMode = clampRange((int)@Core::failSafeMode, 0, 2);
+  gEmergencyContext = clampRange((int)@Core::emergencyContext, 0, 2);
+  if (gBoundaryStatus == 1)
+  {
+    if (gFailSafeMode > 0)
+    {
+      gRoutingPolicy = 0;
+    }
+    else if (gEmergencyContext > 0)
+    {
+      gRoutingPolicy = 2;
+    }
+    else
+    {
+      gRoutingPolicy = 1;
+    }
+  }
+  else
+  {
+    gBoundaryStatus = 0;
+    gRoutingPolicy = 0;
+  }
+
+  mState.gVehicleSpeed = gSpeed;
+  mState.gDriveState = driveState;
+  output(mState);
+  @Chassis::vehicleSpeed = gSpeed;
+  @Chassis::driveState = driveState;
+  gLastPublishedVehicleSpeed = gSpeed;
+  gLastPublishedDriveState = driveState;
+  @Chassis::throttlePosition = clampRange(accelPedal, 0, 100);
+  publishBackboneVehicleState(gSpeed, driveState);
+
+  if (driveMode == 0 &&
+      driveState > 0 &&
+      accelPedal >= 50 &&
+      gSpeedLimitNorm >= 100)
+  {
+    driveMode = 2;
+    gDriveMode = 2;
+  }
+
+  torqueRequest = deriveTorqueRequest(gDriveMode, accelPedal, gSpeedLimitNorm);
+  mAccel.AccelRequest = accelPedal;
+  mAccel.TorqueRequest = torqueRequest;
+  output(mAccel);
+
+  tcsActive = ((accelPedal > 70) && (gSpeed < 25)) ? 1 : 0;
+  mTcs.TcsCtrlState = tcsActive ? 2 : 0;
+  mTcs.TcsTorqueCut = tcsActive ? 20 : 0;
+  mTcs.TcsSlipRatio = tcsActive ? 12 : 0;
+  output(mTcs);
+
+  mWheelPulse.WheelPulseFront = gSpeed;
+  mWheelPulse.WheelPulseRear = gSpeed;
+  output(mWheelPulse);
+
+  mPtGw.RoutingPolicy = gRoutingPolicy;
+  mPtGw.BoundaryStatus = gBoundaryStatus;
+  output(mPtGw);
+
+  mVehMode.DriveMode = gDriveMode;
+  mVehMode.EcoMode = (gDriveMode == 3) ? 1 : 0;
+  mVehMode.SportMode = (gSpeed > 80) ? 1 : 0;
+  mVehMode.SnowMode = (gDriveMode == 0 && gSpeed < 20) ? 1 : 0;
+  mVehMode.PowertrainState = engineState;
+  output(mVehMode);
+
+  mPowerLimit.TorqueLimit = torqueRequest;
+  mPowerLimit.SpeedLimit = gSpeedLimitNorm;
+  output(mPowerLimit);
+
+  mPtHealth.PtAliveCnt = gPtAliveCnt & 0xFF;
+  mPtHealth.PtDiagState = 1;
+  mPtHealth.PtFailCode = 0;
+  @Diag::PtDiagState = mPtHealth.PtDiagState;
+  @Diag::PtFailCode = mPtHealth.PtFailCode;
+  output(mPtHealth);
+  gPtAliveCnt = (gPtAliveCnt + 1) & 0xFF;
+
+  energyFlowMode = deriveEnergyFlowMode(driveState, accelPedal, brakePedal);
+  if (gDriveMode == 2 && energyFlowMode == 0)
+  {
+    energyFlowMode = 1;
+  }
+  regenLevel = deriveRegenLevel(gDriveMode, brakePedal);
+  if (gDriveMode == 2 && brakePedal < 10 && regenLevel < 4)
+  {
+    regenLevel = 4;
+  }
+  powerBalance = derivePowerBalance(gDriveMode, accelPedal, brakePedal);
+  mEnergy.EnergyFlowMode = energyFlowMode;
+  mEnergy.RegenLevel = regenLevel;
+  mEnergy.PowerBalance = powerBalance;
+  output(mEnergy);
+
+  mCtrlAuth.CtrlAuthLevel = (gBoundaryStatus == 1) ? 3 : 1;
+  mCtrlAuth.CtrlAuthSource = 1;
+  output(mCtrlAuth);
+
+  setTimer(tVcuCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tVcuCycle);
+  ethCloseSocket(gEthTxSocket);
+  gEthTxSocket = ethInvalidSocket();
+}

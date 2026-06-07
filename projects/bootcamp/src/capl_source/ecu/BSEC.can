@@ -1,0 +1,278 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tSecurityCycle;
+  int gDoorFlOpenState;
+  int gDoorFrOpenState;
+  int gDoorRlOpenState;
+  int gDoorRrOpenState;
+  int gTailgateOpenState;
+  int gDriveState;
+  int gImmobilizerState;
+  int gKeyAuthState;
+  int gAlarmArmState;
+  int gIntrusionDetect;
+  dword gDoorFlRxMs;
+  dword gDoorFrRxMs;
+  dword gDoorRlRxMs;
+  dword gDoorRrRxMs;
+  dword gTailgateRxMs;
+  dword gVehicleRxMs;
+  dword gImmoRxMs;
+  int gLastApertureInputStale;
+  int gLastVehicleInputStale;
+  int gLastImmoInputStale;
+  int gLastAlarmArmState;
+  int gLastIntrusionDetect;
+}
+
+void traceBsecInputHealth(int apertureInputStale, int vehicleInputStale, int immoInputStale)
+{
+  if (apertureInputStale != gLastApertureInputStale)
+  {
+    if (apertureInputStale == 1)
+    {
+      write("[BSEC] aperture input stale");
+    }
+    else
+    {
+      write("[BSEC] aperture input restored");
+    }
+    gLastApertureInputStale = apertureInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[BSEC] vehicle input stale");
+    }
+    else
+    {
+      write("[BSEC] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+
+  if (immoInputStale != gLastImmoInputStale)
+  {
+    if (immoInputStale == 1)
+    {
+      write("[BSEC] immobilizer input stale");
+    }
+    else
+    {
+      write("[BSEC] immobilizer input restored");
+    }
+    gLastImmoInputStale = immoInputStale;
+  }
+}
+
+void publishSecurityState()
+{
+  message frmAlarmStateMsg mAlarm;
+  int apertureInputStale;
+  int vehicleInputStale;
+  int immoInputStale;
+  int driveState;
+  int manualMode;
+  int allClosed;
+  int anyOpen;
+  int authorizedAccess;
+  int canArm;
+  int alarmArmState;
+  int intrusionDetect;
+
+  apertureInputStale = 0;
+  if (ethIsRecentTick(gDoorFlRxMs, 300) == 0 ||
+      ethIsRecentTick(gDoorFrRxMs, 300) == 0 ||
+      ethIsRecentTick(gDoorRlRxMs, 300) == 0 ||
+      ethIsRecentTick(gDoorRrRxMs, 300) == 0 ||
+      ethIsRecentTick(gTailgateRxMs, 300) == 0)
+  {
+    apertureInputStale = 1;
+  }
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  immoInputStale = (ethIsRecentTick(gImmoRxMs, 300) == 1) ? 0 : 1;
+  traceBsecInputHealth(apertureInputStale, vehicleInputStale, immoInputStale);
+
+  driveState = gDriveState;
+  manualMode = (((int)@Test::scenarioActiveId) == 0) ? 1 : 0;
+  if (vehicleInputStale == 1)
+  {
+    driveState = 3;
+  }
+
+  allClosed = 0;
+  anyOpen = 0;
+  if (apertureInputStale == 0)
+  {
+    allClosed = 1;
+    if (gDoorFlOpenState > 0 ||
+        gDoorFrOpenState > 0 ||
+        gDoorRlOpenState > 0 ||
+        gDoorRrOpenState > 0 ||
+        gTailgateOpenState > 0)
+    {
+      allClosed = 0;
+      anyOpen = 1;
+    }
+  }
+
+  authorizedAccess = 0;
+  if (immoInputStale == 0 &&
+      gImmobilizerState >= 0 &&
+      gKeyAuthState >= 1)
+  {
+    authorizedAccess = 1;
+  }
+
+  canArm = 0;
+  if (manualMode == 0 &&
+      apertureInputStale == 0 &&
+      vehicleInputStale == 0 &&
+      driveState == 0 &&
+      authorizedAccess == 0 &&
+      allClosed == 1)
+  {
+    canArm = 1;
+  }
+
+  alarmArmState = gAlarmArmState;
+  intrusionDetect = gIntrusionDetect;
+
+  if (manualMode == 1)
+  {
+    alarmArmState = 0;
+    intrusionDetect = 0;
+  }
+  else if (authorizedAccess == 1 || driveState > 0)
+  {
+    alarmArmState = 0;
+    intrusionDetect = 0;
+  }
+  else
+  {
+    if (canArm == 1)
+    {
+      alarmArmState = 1;
+    }
+    else if (apertureInputStale == 1 || vehicleInputStale == 1 || immoInputStale == 1)
+    {
+      alarmArmState = 0;
+      intrusionDetect = 0;
+    }
+
+    if (gAlarmArmState == 1 && anyOpen == 1 && authorizedAccess == 0)
+    {
+      alarmArmState = 1;
+      intrusionDetect = 1;
+    }
+  }
+
+  gAlarmArmState = alarmArmState;
+  gIntrusionDetect = intrusionDetect;
+
+  mAlarm.AlarmArmState = clampRange(gAlarmArmState, 0, 1);
+  mAlarm.IntrusionDetect = clampRange(gIntrusionDetect, 0, 1);
+  output(mAlarm);
+
+  if (mAlarm.AlarmArmState != gLastAlarmArmState ||
+      mAlarm.IntrusionDetect != gLastIntrusionDetect)
+  {
+    write("[BSEC] arm=%d intrusion=%d closed=%d auth=%d drive=%d",
+          mAlarm.AlarmArmState,
+          mAlarm.IntrusionDetect,
+          allClosed,
+          authorizedAccess,
+          driveState);
+    gLastAlarmArmState = mAlarm.AlarmArmState;
+    gLastIntrusionDetect = mAlarm.IntrusionDetect;
+  }
+}
+
+on start
+{
+  gDoorFlOpenState = 0;
+  gDoorFrOpenState = 0;
+  gDoorRlOpenState = 0;
+  gDoorRrOpenState = 0;
+  gTailgateOpenState = 0;
+  gDriveState = 0;
+  gImmobilizerState = 1;
+  gKeyAuthState = 0;
+  gAlarmArmState = 0;
+  gIntrusionDetect = 0;
+  gDoorFlRxMs = 0;
+  gDoorFrRxMs = 0;
+  gDoorRlRxMs = 0;
+  gDoorRrRxMs = 0;
+  gTailgateRxMs = 0;
+  gVehicleRxMs = 0;
+  gImmoRxMs = 0;
+  gLastApertureInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastImmoInputStale = 0;
+  gLastAlarmArmState = -1;
+  gLastIntrusionDetect = -1;
+  setTimer(tSecurityCycle, 100);
+  write("[BSEC] start");
+}
+
+on message frmDoorFlStateMsg
+{
+  gDoorFlOpenState = clampRange((int)this.DoorFlOpenState, 0, 1);
+  gDoorFlRxMs = getSimulationTimeMs();
+}
+
+on message frmDoorFrStateMsg
+{
+  gDoorFrOpenState = clampRange((int)this.DoorFrOpenState, 0, 1);
+  gDoorFrRxMs = getSimulationTimeMs();
+}
+
+on message frmDoorRlStateMsg
+{
+  gDoorRlOpenState = clampRange((int)this.DoorRlOpenState, 0, 1);
+  gDoorRlRxMs = getSimulationTimeMs();
+}
+
+on message frmDoorRrStateMsg
+{
+  gDoorRrOpenState = clampRange((int)this.DoorRrOpenState, 0, 1);
+  gDoorRrRxMs = getSimulationTimeMs();
+}
+
+on message frmTailgateStateMsg
+{
+  gTailgateOpenState = clampRange((int)this.TailgateOpenState, 0, 1);
+  gTailgateRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on message frmImmobilizerStateMsg
+{
+  gImmobilizerState = clampRange((int)this.ImmobilizerState, 0, 3);
+  gKeyAuthState = clampRange((int)this.KeyAuthState, 0, 3);
+  gImmoRxMs = getSimulationTimeMs();
+}
+
+on timer tSecurityCycle
+{
+  publishSecurityState();
+  setTimer(tSecurityCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tSecurityCycle);
+}

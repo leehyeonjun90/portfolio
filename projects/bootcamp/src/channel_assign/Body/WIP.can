@@ -1,0 +1,192 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tWiperCycle;
+  int gRainSenseLevel;
+  int gAutoLightState;
+  dword gRainRxMs;
+  int gLastRainInputStale;
+  int gLastFrontWiperState;
+  int gLastRearWiperState;
+  int gLastWiperInterval;
+  int gWiperPos;
+  int gWiperDir;
+}
+
+void traceWipInputHealth(int rainInputStale)
+{
+  if (rainInputStale != gLastRainInputStale)
+  {
+    if (rainInputStale == 1)
+    {
+      write("[WIP] rain/light input stale");
+    }
+    else
+    {
+      write("[WIP] rain/light input restored");
+    }
+    gLastRainInputStale = rainInputStale;
+  }
+}
+
+void publishWiperState()
+{
+  message frmWiperStateMsg mWiper;
+  int rainInputStale;
+  int rainSenseLevel;
+  int autoLightState;
+  int manualWiperCmd;
+  int frontWiperState;
+  int rearWiperState;
+  int wiperInterval;
+  int step;
+
+  rainInputStale = (ethIsRecentTick(gRainRxMs, 300) == 1) ? 0 : 1;
+  traceWipInputHealth(rainInputStale);
+
+  rainSenseLevel = gRainSenseLevel;
+  autoLightState = gAutoLightState;
+  if (rainInputStale == 1)
+  {
+    rainSenseLevel = 0;
+    autoLightState = 0;
+  }
+
+  frontWiperState = 0;
+  rearWiperState = 0;
+  wiperInterval = 0;
+  manualWiperCmd = 0;
+  if ((int)@Test::scenarioActiveId == 0)
+  {
+    manualWiperCmd = clampRange((int)@Cmd::wiperCmd, 0, 2);
+  }
+
+  if (manualWiperCmd == 2)
+  {
+    frontWiperState = 3;
+    rearWiperState = 0;
+    wiperInterval = 0;
+  }
+  else if (manualWiperCmd == 1)
+  {
+    frontWiperState = 1;
+    rearWiperState = 0;
+    wiperInterval = 4;
+  }
+  else if (rainSenseLevel >= 5)
+  {
+    frontWiperState = 3;
+  }
+  else if (rainSenseLevel >= 3)
+  {
+    frontWiperState = 2;
+  }
+  else if (rainSenseLevel >= 1 || autoLightState >= 1)
+  {
+    frontWiperState = 1;
+  }
+
+  if (manualWiperCmd == 0 && frontWiperState == 1)
+  {
+    wiperInterval = clampRange(6 - rainSenseLevel, 1, 15);
+  }
+
+  if (rainSenseLevel >= 4)
+  {
+    rearWiperState = 1;
+  }
+
+  if (frontWiperState == 1)
+  {
+    step = 1;
+  }
+  else if (frontWiperState >= 2)
+  {
+    step = 2;
+  }
+  else
+  {
+    step = 0;
+  }
+
+  if (step > 0)
+  {
+    gWiperPos = gWiperPos + (gWiperDir * step);
+    if (gWiperPos >= 21)
+    {
+      gWiperPos = 21;
+      gWiperDir = -1;
+    }
+    if (gWiperPos <= 0)
+    {
+      gWiperPos = 0;
+      gWiperDir = 1;
+    }
+  }
+  else
+  {
+    gWiperPos = 0;
+    gWiperDir = 1;
+  }
+
+  mWiper.FrontWiperState = clampRange(frontWiperState, 0, 3);
+  mWiper.RearWiperState = clampRange(rearWiperState, 0, 3);
+  mWiper.WiperInterval = clampRange(wiperInterval, 0, 15);
+  output(mWiper);
+  @Body::wiperPos = clampRange(gWiperPos, 0, 21);
+  @Body::frontWiperAnimFrame = clampRange(gWiperPos, 0, 21);
+
+  if (mWiper.FrontWiperState != gLastFrontWiperState ||
+      mWiper.RearWiperState != gLastRearWiperState ||
+      mWiper.WiperInterval != gLastWiperInterval)
+  {
+    write("[WIP] front=%d rear=%d interval=%d rain=%d auto=%d",
+          mWiper.FrontWiperState,
+          mWiper.RearWiperState,
+          mWiper.WiperInterval,
+          rainSenseLevel,
+          autoLightState);
+    gLastFrontWiperState = mWiper.FrontWiperState;
+    gLastRearWiperState = mWiper.RearWiperState;
+    gLastWiperInterval = mWiper.WiperInterval;
+  }
+}
+
+on start
+{
+  gRainSenseLevel = 0;
+  gAutoLightState = 0;
+  gRainRxMs = 0;
+  gLastRainInputStale = 0;
+  gLastFrontWiperState = -1;
+  gLastRearWiperState = -1;
+  gLastWiperInterval = -1;
+  gWiperPos = 0;
+  gWiperDir = 1;
+  @Body::wiperPos = 0;
+  @Body::frontWiperAnimFrame = 0;
+  setTimer(tWiperCycle, 100);
+  write("[WIP] start");
+}
+
+on message frmRainLightAutoMsg
+{
+  gRainSenseLevel = clampRange((int)this.RainSenseLevel, 0, 15);
+  gAutoLightState = clampRange((int)this.AutoLightState, 0, 3);
+  gRainRxMs = getSimulationTimeMs();
+}
+
+on timer tWiperCycle
+{
+  publishWiperState();
+  setTimer(tWiperCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tWiperCycle);
+}

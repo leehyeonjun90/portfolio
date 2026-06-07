@@ -1,0 +1,341 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tLdwsCycle;
+  int gCameraHealth;
+  int gLaneModelValid;
+  int gRouteClass;
+  int gTurnLampState;
+  int gVehicleSpeed;
+  int gSteeringInput;
+  dword gFcamRxMs;
+  dword gNavRxMs;
+  dword gLampRxMs;
+  dword gVehicleRxMs;
+  dword gSteeringRxMs;
+  int gWarningPathStatus;
+  int gE2eHealthState;
+  int gFailSafeMode;
+  dword gFailSafeRxMs;
+  int gLastFcamInputStale;
+  int gLastNavInputStale;
+  int gLastLampInputStale;
+  int gLastVehicleInputStale;
+  int gLastSteeringInputStale;
+  int gLastLaneDepartureWarn;
+  int gLastLaneKeepAssist;
+  int gLastLaneGuideState;
+  int gLastTurnLampState;
+  int gLastVehicleSpeed;
+  int gLastAlertLevel;
+  int gLastPathReady;
+}
+
+int ldwsPathReady()
+{
+  if (gFailSafeRxMs == 0)
+  {
+    return 1;
+  }
+  if (ethIsRecentTick(gFailSafeRxMs, 300) == 0)
+  {
+    return (gWarningPathStatus < 2 && gE2eHealthState > 0 && gFailSafeMode < 2) ? 1 : 0;
+  }
+  if (gWarningPathStatus >= 2 || gE2eHealthState == 0 || gFailSafeMode >= 2)
+  {
+    return 0;
+  }
+  return 1;
+}
+
+void traceLdwsInputHealth(int fcamInputStale,
+                          int navInputStale,
+                          int lampInputStale,
+                          int vehicleInputStale,
+                          int steeringInputStale)
+{
+  if (fcamInputStale != gLastFcamInputStale)
+  {
+    if (fcamInputStale == 1)
+    {
+      write("[LDWS_LKAS] fcam input stale");
+    }
+    else
+    {
+      write("[LDWS_LKAS] fcam input restored");
+    }
+    gLastFcamInputStale = fcamInputStale;
+  }
+
+  if (navInputStale != gLastNavInputStale)
+  {
+    if (navInputStale == 1)
+    {
+      write("[LDWS_LKAS] nav input stale");
+    }
+    else
+    {
+      write("[LDWS_LKAS] nav input restored");
+    }
+    gLastNavInputStale = navInputStale;
+  }
+
+  if (lampInputStale != gLastLampInputStale)
+  {
+    if (lampInputStale == 1)
+    {
+      write("[LDWS_LKAS] lamp input stale");
+    }
+    else
+    {
+      write("[LDWS_LKAS] lamp input restored");
+    }
+    gLastLampInputStale = lampInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[LDWS_LKAS] vehicle input stale");
+    }
+    else
+    {
+      write("[LDWS_LKAS] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+
+  if (steeringInputStale != gLastSteeringInputStale)
+  {
+    if (steeringInputStale == 1)
+    {
+      write("[LDWS_LKAS] steering input stale");
+    }
+    else
+    {
+      write("[LDWS_LKAS] steering input restored");
+    }
+    gLastSteeringInputStale = steeringInputStale;
+  }
+}
+
+void publishLdwsLkasState()
+{
+  message frmLdwsLkasStateMsg mLdws;
+  int fcamInputStale;
+  int navInputStale;
+  int lampInputStale;
+  int vehicleInputStale;
+  int steeringInputStale;
+  int cameraHealth;
+  int laneModelValid;
+  int routeClass;
+  int turnLampState;
+  int vehicleSpeed;
+  int steeringInput;
+  int alertLevel;
+  int laneDepartureWarn;
+  int laneKeepAssist;
+  int laneGuideState;
+  int pathReady;
+  int highwayContext;
+
+  fcamInputStale = (ethIsRecentTick(gFcamRxMs, 300) == 1) ? 0 : 1;
+  navInputStale = (ethIsRecentTick(gNavRxMs, 300) == 1) ? 0 : 1;
+  lampInputStale = (ethIsRecentTick(gLampRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  steeringInputStale = (ethIsRecentTick(gSteeringRxMs, 300) == 1) ? 0 : 1;
+  traceLdwsInputHealth(fcamInputStale,
+                       navInputStale,
+                       lampInputStale,
+                       vehicleInputStale,
+                       steeringInputStale);
+
+  cameraHealth = gCameraHealth;
+  laneModelValid = gLaneModelValid;
+  routeClass = gRouteClass;
+  turnLampState = gTurnLampState;
+  vehicleSpeed = gVehicleSpeed;
+  steeringInput = gSteeringInput;
+  if (fcamInputStale == 1)
+  {
+    cameraHealth = 0;
+    laneModelValid = 0;
+  }
+  if (navInputStale == 1)
+  {
+    routeClass = 0;
+  }
+  if (lampInputStale == 1)
+  {
+    turnLampState = 0;
+  }
+  if (vehicleInputStale == 1)
+  {
+    vehicleSpeed = 0;
+  }
+  if (steeringInputStale == 1)
+  {
+    steeringInput = 0;
+  }
+
+  pathReady = ldwsPathReady();
+  highwayContext = (routeClass == 2) ? 1 : 0;
+  alertLevel = 0;
+  laneDepartureWarn = 0;
+  laneKeepAssist = 0;
+  laneGuideState = 0;
+
+  if (highwayContext == 1 &&
+      vehicleSpeed >= 30 &&
+      turnLampState == 0 &&
+      laneModelValid == 1 &&
+      steeringInput == 1)
+  {
+    laneDepartureWarn = 1;
+    laneGuideState = 1;
+    alertLevel = 2;
+  }
+
+  if (highwayContext == 1 &&
+      vehicleSpeed >= 40 &&
+      turnLampState == 0 &&
+      laneModelValid == 1 &&
+      cameraHealth >= 2)
+  {
+    laneKeepAssist = 1;
+    laneGuideState = 2;
+    alertLevel = 3;
+  }
+  if (pathReady == 0)
+  {
+    laneDepartureWarn = 0;
+    laneKeepAssist = 0;
+    laneGuideState = 0;
+    alertLevel = 0;
+  }
+
+  mLdws.LaneDepartureWarn = laneDepartureWarn;
+  mLdws.LaneKeepAssistActive = laneKeepAssist;
+  mLdws.LaneGuideState = laneGuideState;
+  mLdws.TurnLampState = turnLampState;
+  mLdws.VehicleSpeed = vehicleSpeed;
+  mLdws.SelectedAlertLevel = alertLevel;
+  output(mLdws);
+
+  if (pathReady != gLastPathReady ||
+      laneDepartureWarn != gLastLaneDepartureWarn ||
+      laneKeepAssist != gLastLaneKeepAssist ||
+      laneGuideState != gLastLaneGuideState ||
+      turnLampState != gLastTurnLampState ||
+      vehicleSpeed != gLastVehicleSpeed ||
+      alertLevel != gLastAlertLevel)
+  {
+    write("[LDWS_LKAS] path=%d warn=%d assist=%d guide=%d turn=%d speed=%d route=%d lane=%d cam=%d alert=%d",
+          pathReady,
+          laneDepartureWarn,
+          laneKeepAssist,
+          laneGuideState,
+          turnLampState,
+          vehicleSpeed,
+          routeClass,
+          laneModelValid,
+          cameraHealth,
+          alertLevel);
+    gLastPathReady = pathReady;
+    gLastLaneDepartureWarn = laneDepartureWarn;
+    gLastLaneKeepAssist = laneKeepAssist;
+    gLastLaneGuideState = laneGuideState;
+    gLastTurnLampState = turnLampState;
+    gLastVehicleSpeed = vehicleSpeed;
+    gLastAlertLevel = alertLevel;
+  }
+}
+
+on start
+{
+  gCameraHealth = 0;
+  gLaneModelValid = 0;
+  gRouteClass = 0;
+  gTurnLampState = 0;
+  gVehicleSpeed = 0;
+  gSteeringInput = 0;
+  gFcamRxMs = 0;
+  gNavRxMs = 0;
+  gLampRxMs = 0;
+  gVehicleRxMs = 0;
+  gSteeringRxMs = 0;
+  gWarningPathStatus = 1;
+  gE2eHealthState = 1;
+  gFailSafeMode = 0;
+  gFailSafeRxMs = 0;
+  gLastFcamInputStale = 0;
+  gLastNavInputStale = 0;
+  gLastLampInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastSteeringInputStale = 0;
+  gLastPathReady = -1;
+  gLastLaneDepartureWarn = -1;
+  gLastLaneKeepAssist = -1;
+  gLastLaneGuideState = -1;
+  gLastTurnLampState = -1;
+  gLastVehicleSpeed = -1;
+  gLastAlertLevel = -1;
+  setTimer(tLdwsCycle, 100);
+  write("[LDWS_LKAS] start");
+}
+
+on timer tLdwsCycle
+{
+  publishLdwsLkasState();
+  setTimer(tLdwsCycle, 100);
+}
+
+on message frmFcamStateMsg
+{
+  gCameraHealth = clampRange((int)this.CameraHealth, 0, 3);
+  gLaneModelValid = clampRange((int)this.LaneModelValid, 0, 1);
+  gFcamRxMs = getSimulationTimeMs();
+}
+
+on message frmNavigationRouteMsg
+{
+  gRouteClass = clampRange((int)this.RouteClass, 0, 3);
+  gNavRxMs = getSimulationTimeMs();
+}
+
+on message frmLampControlMsg
+{
+  gTurnLampState = clampRange((int)this.TurnLampState, 0, 3);
+  gLampRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on message frmSteeringStateCanMsg
+{
+  gSteeringInput = clampRange((int)this.SteeringState, 0, 1);
+  gSteeringRxMs = getSimulationTimeMs();
+}
+
+on message frmAdasDomainStateMsg
+{
+  gWarningPathStatus = clampRange((int)this.WarningPathStatus, 0, 2);
+  gE2eHealthState = clampRange((int)this.E2eHealthState, 0, 2);
+  gFailSafeMode = clampRange((int)this.FailSafeMode, 0, 2);
+  gFailSafeRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tLdwsCycle);
+}

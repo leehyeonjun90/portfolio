@@ -1,0 +1,621 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tEngineCycle;
+  msTimer tAnimStep;
+  msTimer tHighwayEntry;
+  int gAccelPedal;
+  int gBrakePedal;
+  int gIgnitionState;
+  int gEngineState;
+  int gVehicleSpeed;
+  dword gPedalRxMs;
+  dword gIgnitionRxMs;
+  dword gVehicleRxMs;
+  int gLastPedalInputStale;
+  int gLastIgnitionInputStale;
+  int gLastVehicleInputStale;
+  int gLastEngineState;
+  int gLastAnimEngineState;
+  int gFuelLevel;
+  int gBatterySoc;
+  int gLastRoadZone;
+  int gAnimFrame;
+  int gAnimEndFrame;
+  int gAnimRunning;
+  int gAnimInterval;
+  int gInitDone;
+}
+
+void traceEmsInputHealth(int ignitionInputStale, int pedalInputStale, int vehicleInputStale)
+{
+  if (ignitionInputStale != gLastIgnitionInputStale)
+  {
+    if (ignitionInputStale == 1)
+    {
+      write("[EMS] ignition input stale");
+    }
+    else
+    {
+      write("[EMS] ignition input restored");
+    }
+    gLastIgnitionInputStale = ignitionInputStale;
+  }
+
+  if (pedalInputStale != gLastPedalInputStale)
+  {
+    if (pedalInputStale == 1)
+    {
+      write("[EMS] pedal input stale");
+    }
+    else
+    {
+      write("[EMS] pedal input restored");
+    }
+    gLastPedalInputStale = pedalInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[EMS] vehicle input stale");
+    }
+    else
+    {
+      write("[EMS] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+int deriveThrottlePos(int engineState, int accelPedal, int brakePedal)
+{
+  int throttlePos;
+
+  if (engineState != 3)
+  {
+    return 0;
+  }
+
+  throttlePos = accelPedal;
+  if (brakePedal >= 20)
+  {
+    throttlePos = throttlePos - (brakePedal / 2);
+  }
+  return clampRange(throttlePos, 0, 100);
+}
+
+int deriveEngineRpm(int engineState, int accelPedal, int brakePedal, int speed)
+{
+  int rpm;
+
+  if (engineState == 0)
+  {
+    return 0;
+  }
+  if (engineState == 1)
+  {
+    return 500;
+  }
+  if (engineState == 2)
+  {
+    return 850;
+  }
+
+  rpm = 850 + (speed * 12);
+  rpm = rpm + (accelPedal * 18);
+  if (speed < 10 && accelPedal >= 40)
+  {
+    rpm = rpm + 250;
+  }
+  if (brakePedal >= 20)
+  {
+    rpm = rpm - (brakePedal * 4);
+  }
+
+  return clampRange(rpm, 700, 6500);
+}
+
+int deriveEngineLoad(int engineState, int throttlePos, int brakePedal, int speed)
+{
+  int engineLoad;
+
+  if (engineState != 3)
+  {
+    return 0;
+  }
+
+  engineLoad = (throttlePos * 3 / 4) + (speed / 10);
+  if (speed < 15 && throttlePos >= 30)
+  {
+    engineLoad = engineLoad + 10;
+  }
+  if (brakePedal >= 20)
+  {
+    engineLoad = engineLoad - 5;
+  }
+
+  return clampRange(engineLoad, 0, 100);
+}
+
+int deriveEngineTorque(int engineState, int engineLoad, int rpm)
+{
+  int torque;
+
+  if (engineState != 3)
+  {
+    return 0;
+  }
+
+  torque = engineLoad * 2;
+  if (rpm < 2000)
+  {
+    torque = torque + (rpm / 40);
+  }
+  else if (rpm < 3500)
+  {
+    torque = torque + 50 + ((3500 - rpm) / 30);
+  }
+  else
+  {
+    torque = torque + 20 + ((5000 - rpm) / 60);
+  }
+
+  return clampRange(torque, 0, 300);
+}
+
+int deriveManualEmsEngineState(int ignitionState, int driveState, int speed, int accelPedal)
+{
+  if (ignitionState == 0)
+  {
+    return 0;
+  }
+  if (driveState > 0 || speed > 0 || accelPedal > 0)
+  {
+    return 3;
+  }
+  return 2;
+}
+
+int getCrossSceneAlertOverrideFrame()
+{
+  if (((int)@V2X::CrossAnimAlertActive) == 1)
+  {
+    return 2;
+  }
+  return -1;
+}
+
+void updateWarningFrame()
+{
+  int beltWarn;
+  int doorOpen;
+  int policePos;
+  int ambulancePos;
+  int selectedAlertLevel;
+  int selectedAlertType;
+  int compatV2xFrame;
+  int compatAlertState;
+  int crossSceneAlertFrame;
+  int nextFrame;
+
+  if (gInitDone == 0)
+  {
+    return;
+  }
+
+  beltWarn = clampRange((int)@CoreState::seatBeltWarnLvl, 0, 3);
+  doorOpen = (clampRange((int)@Cmd::doorOpenCmd, 0, 2) == 1) ? 1
+             : clampRange((int)@Body::doorOpenCmd, 0, 1);
+  policePos = clampRange((int)@V2X::policePos, 0, 7);
+  ambulancePos = clampRange((int)@V2X::ambulancePos, 0, 7);
+  selectedAlertLevel = clampRange((int)@Core::selectedAlertLevel, 0, 7);
+  selectedAlertType = clampRange((int)@Core::selectedAlertType, 0, 15);
+  compatV2xFrame = clampRange((int)@V2X::v2xFrame, 0, 255);
+  compatAlertState = (((int)@V2X::alertState) > 0) ? 1 : 0;
+  crossSceneAlertFrame = getCrossSceneAlertOverrideFrame();
+  nextFrame = 0;
+
+  if (crossSceneAlertFrame >= 0)
+  {
+    nextFrame = crossSceneAlertFrame;
+  }
+  else if (gAnimRunning == 1)
+  {
+    return;
+  }
+  else if (compatAlertState == 1 && compatV2xFrame > 0)
+  {
+    nextFrame = compatV2xFrame;
+  }
+  else if (policePos >= 6 || (selectedAlertLevel >= 6 && selectedAlertType == 1))
+  {
+    nextFrame = 1;
+  }
+  else if (ambulancePos >= 6 || (selectedAlertLevel >= 6 && selectedAlertType == 2))
+  {
+    nextFrame = 2;
+  }
+  else if (selectedAlertType == 3)
+  {
+    nextFrame = 3;
+  }
+  else if (selectedAlertType == 4)
+  {
+    nextFrame = 4;
+  }
+  else if (selectedAlertType == 5)
+  {
+    nextFrame = 5;
+  }
+  else if (selectedAlertType == 6)
+  {
+    nextFrame = 6;
+  }
+  else if (doorOpen == 1)
+  {
+    nextFrame = 8;
+  }
+  else if (beltWarn >= 2)
+  {
+    nextFrame = 7;
+  }
+
+  if (crossSceneAlertFrame < 0 &&
+      ((int)@Test::scenarioActiveId) == 0 &&
+      gEngineState == 0)
+  {
+    @Display::animFrame = 0;
+    return;
+  }
+
+  @Display::animFrame = nextFrame;
+}
+
+on start
+{
+  gAccelPedal      = 0;
+  gBrakePedal      = 0;
+  gIgnitionState   = 0;
+  gEngineState     = 0;
+  gVehicleSpeed    = 0;
+  gPedalRxMs       = 0;
+  gIgnitionRxMs    = 0;
+  gVehicleRxMs     = 0;
+  gLastPedalInputStale = 0;
+  gLastIgnitionInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastEngineState = -1;
+  gLastAnimEngineState = 0;
+  gFuelLevel       = 80;
+  gBatterySoc      = 95;
+  gLastRoadZone    = -1;
+  gAnimFrame       = 0;
+  gAnimEndFrame    = 39;
+  gAnimRunning     = 0;
+  gAnimInterval    = 133;
+  gInitDone        = 0;
+  @Powertrain::engineRpm = 0;
+  @Powertrain::coolantTemp = 20;
+  @Powertrain::fuelLevel = gFuelLevel;
+  @Display::animFrame = 0;
+  setTimer(tEngineCycle, 100);
+  write("[EMS] start");
+}
+
+on timer tAnimStep
+{
+  if (getCrossSceneAlertOverrideFrame() >= 0)
+  {
+    @Display::animFrame = getCrossSceneAlertOverrideFrame();
+    setTimer(tAnimStep, gAnimInterval);
+    return;
+  }
+
+  if (gAnimRunning == 0)
+  {
+    return;
+  }
+
+  gAnimFrame = gAnimFrame + 1;
+  if (gAnimFrame > gAnimEndFrame)
+  {
+    gAnimFrame = 0;
+    gAnimRunning = 0;
+    @Display::animFrame = 0;
+    return;
+  }
+
+  @Display::animFrame = gAnimFrame;
+  setTimer(tAnimStep, gAnimInterval);
+}
+
+on timer tHighwayEntry
+{
+  if (gAnimRunning == 1)
+  {
+    return;
+  }
+  if (((int)@Test::scenarioActiveId) > 0)
+  {
+    return;
+  }
+  if (((int)@Core::selectedAlertLevel) == 0)
+  {
+    @Display::animFrame = 0;
+  }
+}
+
+on message frmIgnitionEngineMsg
+{
+  gIgnitionState = clampRange((int)this.IgnitionState, 0, 1);
+  gEngineState   = clampRange((int)this.EngineState, 0, 3);
+  gIgnitionRxMs = getSimulationTimeMs();
+}
+
+on message frmPedalInputCanMsg
+{
+  gAccelPedal = clampRange((int)this.AccelPedal, 0, 100);
+  gBrakePedal = clampRange((int)this.BrakePedal, 0, 100);
+  gPedalRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on timer tEngineCycle
+{
+  message frmEngineSpeedTempMsg  mSpeedTemp;
+  message frmFuelBatteryStateMsg mFuelBat;
+  message frmThrottleStateMsg    mThrottle;
+  message frmEngineTorqueMsg     mTorque;
+  message frmEngineLoadMsg       mLoad;
+  message frmThermalMgmtStateMsg mThermal;
+  int ignitionInputStale;
+  int pedalInputStale;
+  int vehicleInputStale;
+  int ignitionState;
+  int engineState;
+  int accelPedal;
+  int brakePedal;
+  int manualMode;
+  int driveState;
+  int rpm;
+  int throttlePos;
+  int engineLoad;
+  int torque;
+  int speed;
+  int coolantTemp;
+  int oilTemp;
+  int fanDuty;
+
+  ignitionInputStale = (ethIsRecentTick(gIgnitionRxMs, 300) == 1) ? 0 : 1;
+  pedalInputStale = (ethIsRecentTick(gPedalRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  traceEmsInputHealth(ignitionInputStale, pedalInputStale, vehicleInputStale);
+
+  ignitionState = gIgnitionState;
+  engineState = gEngineState;
+  accelPedal = gAccelPedal;
+  brakePedal = gBrakePedal;
+  speed = gVehicleSpeed;
+  manualMode = (((int)@Test::scenarioActiveId) == 0) ? 1 : 0;
+  if (ignitionInputStale == 1)
+  {
+    ignitionState = 0;
+    engineState = 0;
+  }
+  if (pedalInputStale == 1)
+  {
+    accelPedal = 0;
+    brakePedal = 0;
+  }
+  if (vehicleInputStale == 1)
+  {
+    speed = 0;
+  }
+
+  if (manualMode == 1)
+  {
+    driveState = clampRange((int)@Chassis::driveState, 0, 3);
+    speed = clampRange((int)@Chassis::vehicleSpeed, 0, 255);
+    accelPedal = clampRange((int)@Chassis::throttlePosition, 0, 100);
+    brakePedal = clampRange((int)@Chassis::brakePressure, 0, 100);
+    ignitionState = ((((int)@Cmd::ignitionCmd) > 0) ||
+                     driveState > 0 ||
+                     speed > 0 ||
+                     accelPedal > 0 ||
+                     brakePedal > 0) ? 1 : 0;
+    engineState = deriveManualEmsEngineState(ignitionState, driveState, speed, accelPedal);
+  }
+
+  gInitDone = 1;
+
+  rpm = deriveEngineRpm(engineState, accelPedal, brakePedal, speed);
+  @Powertrain::engineRpm = rpm;
+  throttlePos = deriveThrottlePos(engineState, accelPedal, brakePedal);
+  engineLoad = deriveEngineLoad(engineState, throttlePos, brakePedal, speed);
+  torque = deriveEngineTorque(engineState, engineLoad, rpm);
+  coolantTemp = (engineState > 0) ? clampRange(75 + (engineLoad / 5), 20, 120) : 20;
+  @Powertrain::coolantTemp = coolantTemp;
+  @Powertrain::fuelLevel = gFuelLevel;
+  oilTemp = (engineState > 0) ? clampRange(80 + (engineLoad / 4), 20, 140) : 20;
+  fanDuty = (engineState == 3) ? clampRange(engineLoad / 10, 0, 10) : 0;
+
+  mSpeedTemp.EngineRpm   = rpm & 0xFFFF;
+  mSpeedTemp.CoolantTemp = coolantTemp;
+  mSpeedTemp.OilTemp     = oilTemp;
+  output(mSpeedTemp);
+
+  mFuelBat.FuelLevel     = gFuelLevel;
+  mFuelBat.BatterySoc    = gBatterySoc;
+  mFuelBat.ChargingState = 0;
+  output(mFuelBat);
+
+  mThrottle.ThrottlePos = throttlePos;
+  mThrottle.ThrottleReq = throttlePos;
+  output(mThrottle);
+
+  mTorque.EngineTorqueAct = torque & 0xFFFF;
+  output(mTorque);
+
+  mLoad.EngineLoad = engineLoad;
+  output(mLoad);
+
+  mThermal.ThermalMode   = (engineState > 0) ? 1 : 0;
+  mThermal.FanDuty       = fanDuty;
+  mThermal.CoolantTarget = 90;
+  output(mThermal);
+
+  if (engineState > 0 && gLastAnimEngineState == 0)
+  {
+    gAnimFrame = 10;
+    gAnimRunning = 1;
+    @Display::animFrame = gAnimFrame;
+    setTimer(tAnimStep, gAnimInterval);
+  }
+  else if (engineState == 0 && gLastAnimEngineState > 0)
+  {
+    gAnimRunning = 0;
+    cancelTimer(tAnimStep);
+    cancelTimer(tHighwayEntry);
+    gAnimFrame = 0;
+    @Display::animFrame = 0;
+  }
+  gLastAnimEngineState = engineState;
+
+  if (engineState != gLastEngineState)
+  {
+    write("[EMS] ignition=%d engine=%d rpm=%d throttle=%d load=%d torque=%d",
+          ignitionState, engineState, rpm, throttlePos, engineLoad, torque);
+    gLastEngineState = engineState;
+  }
+
+  setTimer(tEngineCycle, 100);
+}
+
+on sysvar Core::selectedAlertType
+{
+  updateWarningFrame();
+}
+
+on sysvar Core::selectedAlertLevel
+{
+  updateWarningFrame();
+}
+
+on sysvar CoreState::seatBeltWarnLvl
+{
+  updateWarningFrame();
+}
+
+on sysvar Body::doorOpenCmd
+{
+  updateWarningFrame();
+}
+
+on sysvar Cmd::doorOpenCmd
+{
+  updateWarningFrame();
+}
+
+on sysvar Body::doorLockCmd
+{
+  updateWarningFrame();
+}
+
+on sysvar Cmd::doorLockCmd
+{
+  updateWarningFrame();
+}
+
+on sysvar V2X::policePos
+{
+  /* `v2xFrame` belongs to the V2X owner.
+     EMS only refreshes local warning compatibility from panel input. */
+  updateWarningFrame();
+}
+
+on sysvar V2X::ambulancePos
+{
+  /* `v2xFrame` belongs to the V2X owner.
+     EMS only refreshes local warning compatibility from panel input. */
+  updateWarningFrame();
+}
+
+on sysvar V2X::CrossAnimAlertActive
+{
+  updateWarningFrame();
+}
+
+on sysvar Infotainment::roadZone
+{
+  int zone;
+
+  if (gAnimRunning == 1)
+  {
+    return;
+  }
+  if (clampRange((int)@Inject::roadZone, 0, 3) > 0)
+  {
+    return;
+  }
+  zone = clampRange((int)@Infotainment::roadZone, 0, 3);
+  if (((int)@Test::scenarioActiveId) > 0)
+  {
+    gLastRoadZone = zone;
+    return;
+  }
+  if (zone == 2 &&
+      gLastRoadZone != 2 &&
+      ((int)@Core::selectedAlertLevel) == 0 &&
+      gEngineState > 0)
+  {
+    @Display::animFrame = 4;
+    setTimer(tHighwayEntry, 3000);
+  }
+  gLastRoadZone = zone;
+}
+
+on sysvar Inject::roadZone
+{
+  int zone;
+
+  if (gAnimRunning == 1)
+  {
+    return;
+  }
+  zone = clampRange((int)@Inject::roadZone, 0, 3);
+  if (((int)@Test::scenarioActiveId) > 0)
+  {
+    gLastRoadZone = zone;
+    return;
+  }
+  if (zone == 2 &&
+      gLastRoadZone != 2 &&
+      ((int)@Core::selectedAlertLevel) == 0 &&
+      gEngineState > 0)
+  {
+    @Display::animFrame = 4;
+    setTimer(tHighwayEntry, 3000);
+  }
+  gLastRoadZone = zone;
+}
+
+on stopMeasurement
+{
+  cancelTimer(tEngineCycle);
+  cancelTimer(tAnimStep);
+  cancelTimer(tHighwayEntry);
+  gAnimRunning = 0;
+  gAnimFrame = 0;
+  @Display::animFrame = 0;
+}

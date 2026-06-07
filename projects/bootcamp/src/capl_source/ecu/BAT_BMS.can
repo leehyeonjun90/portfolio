@@ -1,0 +1,104 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tBmsCycle;
+  int gBatterySoc;
+  int gChargingState;
+  dword gFuelBatteryRxMs;
+  int gLastState;
+  int gLastSoc;
+  int gLastTemp;
+  int gLastInputStale;
+}
+
+on start
+{
+  gBatterySoc = 95;
+  gChargingState = 0;
+  gFuelBatteryRxMs = 0;
+  gLastState = -1;
+  gLastSoc = -1;
+  gLastTemp = -1;
+  gLastInputStale = 1;
+  setTimer(tBmsCycle, 100);
+  write("[BAT_BMS] start");
+}
+
+on message frmFuelBatteryStateMsg
+{
+  gBatterySoc = clampRange((int)this.BatterySoc, 0, 100);
+  gChargingState = clampRange((int)this.ChargingState, 0, 3);
+  gFuelBatteryRxMs = getSimulationTimeMs();
+}
+
+on timer tBmsCycle
+{
+  message frmBatBmsStateMsg mBms;
+  int inputStale;
+  int batterySoc;
+  int chargingState;
+  int bmsState;
+  int packTemp;
+
+  inputStale = 1;
+  if (gFuelBatteryRxMs != 0 &&
+      (getSimulationTimeMs() - gFuelBatteryRxMs) <= 300)
+  {
+    inputStale = 0;
+  }
+
+  batterySoc = gBatterySoc;
+  chargingState = gChargingState;
+  if (inputStale == 1)
+  {
+    batterySoc = 50;
+    chargingState = 0;
+  }
+
+  if (inputStale != gLastInputStale)
+  {
+    if (inputStale == 1)
+    {
+      write("[BAT_BMS] fuel-battery input stale");
+    }
+    else
+    {
+      write("[BAT_BMS] fuel-battery input restored");
+    }
+    gLastInputStale = inputStale;
+  }
+
+  bmsState = (chargingState == 1) ? 2 : ((batterySoc < 15) ? 3 : 1);
+  packTemp = 28 + ((100 - batterySoc) / 8);
+  if (chargingState == 1) packTemp = clampRange(packTemp + 4, 0, 255);
+
+  mBms.BmsState = clampRange(bmsState, 0, 7);
+  mBms.PackSoc = clampRange(batterySoc, 0, 100);
+  mBms.PackTemp = clampRange(packTemp, 0, 255);
+  output(mBms);
+
+  if (mBms.BmsState != gLastState ||
+      mBms.PackSoc != gLastSoc ||
+      mBms.PackTemp != gLastTemp)
+  {
+    write("[BAT_BMS] state=%d soc=%d temp=%d charging=%d",
+          mBms.BmsState,
+          mBms.PackSoc,
+          mBms.PackTemp,
+          chargingState);
+    gLastState = mBms.BmsState;
+    gLastSoc = mBms.PackSoc;
+    gLastTemp = mBms.PackTemp;
+  }
+
+  setTimer(tBmsCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tBmsCycle);
+}

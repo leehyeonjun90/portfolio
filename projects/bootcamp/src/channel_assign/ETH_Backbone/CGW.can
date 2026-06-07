@@ -1,0 +1,597 @@
+/*@!Encoding:949*/
+includes {
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tBoundaryCheck;
+  long gEthSocket;
+  long gEthTxSocket;
+  dword gEthTargetIp;
+  char gEthRxBuffer[64];
+  int gChassisAlive;
+  int gBodyAlive;
+  int gInfoAlive;
+  dword gChassisTsMs;
+  dword gBodyTsMs;
+  dword gInfoTsMs;
+  int gLastBoundaryStatus;
+  int gLastWarningPathStatus;
+  int gLastE2eHealthState;
+  int gLastFailSafeMode;
+  int gVehicleStateAgeMs;
+  int gNavContextAgeMs;
+  int gSteeringAgeMs;
+  int gEmergencyMonAgeMs;
+  dword gStartTsMs;
+  dword gVehicleStateTsMs;
+  dword gNavContextTsMs;
+  dword gSteeringTsMs;
+  dword gEmergencyMonTsMs;
+  dword gBodyGatewayTsMs;
+  int gLastRoutingPolicy;
+  int gLastObjectTrackValid;
+  int gLastObjectFailSafeMode;
+  int gLastObjectEventCode;
+  int gObjectConfidence;
+  int gObjectTrackValid;
+  int gObjectRiskClass;
+  int gObjectEventCode;
+  int gEmergencyContext;
+  dword gObjectRiskTsMs;
+  int gForceFailSafeOverride;
+  dword gForceFailSafeRxMs;
+}
+
+int getCgwTxPort()
+{
+  return ethBackbonePort() + 6;
+}
+
+dword getCgwLocalIp()
+{
+  return IpGetAddressAsNumber("192.168.1.1");
+}
+
+int calcAgeMs(dword lastTsMs, dword nowMs)
+{
+  if (lastTsMs == 0)
+  {
+    return 10000;
+  }
+  return clampRange((int)(nowMs - lastTsMs), 0, 10000);
+}
+
+int pickFresherAgeMs(int ageA, int ageB)
+{
+  return (ageA <= ageB) ? ageA : ageB;
+}
+
+int getBoundaryFallbackAlertType(int emergencyContext)
+{
+  if (emergencyContext == 2)
+  {
+    return 2;
+  }
+  if (emergencyContext == 1)
+  {
+    return 1;
+  }
+  return 3;
+}
+
+void publishFailSafeState(int warningPathStatus,
+                          int e2eHealthState,
+                          int failSafeMode,
+                          int boundaryAlive)
+{
+  char frame[4];
+  long txSocket;
+
+  txSocket = gEthTxSocket;
+  if (txSocket == ethInvalidSocket())
+  {
+    return;
+  }
+
+  ethInitFrame(frame, ethMsgFailSafe(), 1);
+  ethSetU8(frame, 0, clampRange(warningPathStatus, 0, 2) |
+                    (clampRange(e2eHealthState, 0, 2) << 2) |
+                    (clampRange(failSafeMode, 0, 2) << 4) |
+                    (clampRange(boundaryAlive, 0, 1) << 6));
+  ethSendFrame(txSocket, gEthTargetIp, ethMsgFailSafe(), frame, 1);
+}
+
+void publishGatewayState(int routingPolicy,
+                         int warningPathStatus,
+                         int e2eHealthState,
+                         int boundaryAlive)
+{
+  char frame[4];
+  long txSocket;
+
+  txSocket = gEthTxSocket;
+  if (txSocket == ethInvalidSocket())
+  {
+    return;
+  }
+
+  ethInitFrame(frame, ethMsgGatewayState(), 1);
+  ethSetU8(frame, 0, clampRange(routingPolicy, 0, 2) |
+                    (clampRange(boundaryAlive, 0, 1) << 2) |
+                    (clampRange(warningPathStatus, 0, 2) << 3) |
+                    (clampRange(e2eHealthState, 0, 2) << 5));
+  ethSendFrame(txSocket, gEthTargetIp, ethMsgGatewayState(), frame, 1);
+}
+
+void publishObjectSafetyState(int failSafeMode)
+{
+  char frame[8];
+  int objectConfidence;
+  int objectEventCode;
+  int objectTrackValid;
+  long txSocket;
+
+  objectConfidence = gObjectConfidence;
+  objectEventCode = gObjectEventCode;
+  objectTrackValid = gObjectTrackValid;
+  if (ethIsRecentTick(gObjectRiskTsMs, 300) == 0)
+  {
+    objectConfidence = 0;
+    objectEventCode = 0;
+    objectTrackValid = 0;
+  }
+  txSocket = gEthTxSocket;
+  if (txSocket == ethInvalidSocket())
+  {
+    return;
+  }
+
+  ethInitFrame(frame, ethMsgObjectSafety(), 4);
+  ethSetU8(frame, 0, objectConfidence);
+  ethSetU16Le(frame, 1, objectEventCode);
+  ethSetU8(frame, 3, clampRange(failSafeMode, 0, 2) |
+                    (objectTrackValid << 2));
+  ethSendFrame(txSocket, gEthTargetIp, ethMsgObjectSafety(), frame, 4);
+
+  if (objectTrackValid != gLastObjectTrackValid ||
+      failSafeMode != gLastObjectFailSafeMode ||
+      objectEventCode != gLastObjectEventCode)
+  {
+    write("[CGW] objectSafety track=%d conf=%d event=%d failSafe=%d",
+          objectTrackValid, objectConfidence, objectEventCode, failSafeMode);
+    gLastObjectTrackValid = objectTrackValid;
+    gLastObjectFailSafeMode = failSafeMode;
+    gLastObjectEventCode = objectEventCode;
+  }
+}
+
+void OnUdpReceiveFrom(dword socket, long result, dword address, dword port, char buffer[], dword count)
+{
+  int msgId;
+  int objectRiskClass;
+
+  if (socket != gEthSocket)
+  {
+    return;
+  }
+  if (result == 0)
+  {
+    msgId = ethFrameMsgId(buffer, count);
+    if (msgId == ethMsgVehicleState() && ethFramePayloadLen(count) >= 2)
+    {
+      gVehicleStateTsMs = getSimulationTimeMs();
+    }
+    else if (msgId == ethMsgNavContext() && ethFramePayloadLen(count) >= 3)
+    {
+      gNavContextTsMs = getSimulationTimeMs();
+    }
+    else if (msgId == ethMsgSteering() && ethFramePayloadLen(count) >= 1)
+    {
+      gSteeringTsMs = getSimulationTimeMs();
+    }
+    else if (msgId == ethMsgEmergencyMonitor() && ethFramePayloadLen(count) >= 2)
+    {
+      if (ethMatchesSource(address, ethNodeIpV2x(), port, ethV2xTxPort()) == 0)
+      {
+        write("[CGW] mon unexpected src=%lu port=%lu", address, port);
+      }
+      gEmergencyContext = clampRange(ethGetU8(buffer, 0), 0, 2);
+      gEmergencyMonTsMs = getSimulationTimeMs();
+    }
+    else if (msgId == ethMsgObjectRiskState() && ethFramePayloadLen(count) >= 6)
+    {
+      if (ethMatchesSource(address, ethNodeIpAdas(), port, ethAdasTxPort()) == 0)
+      {
+        write("[CGW] obj unexpected src=%lu port=%lu", address, port);
+      }
+      objectRiskClass = clampRange(ethGetU8(buffer, 0), 0, 7);
+      gObjectTrackValid = clampRange(ethGetU8(buffer, 4), 0, 1);
+      gObjectConfidence = clampRange(ethGetU8(buffer, 5), 0, 100);
+      if (objectRiskClass >= 2 && gObjectRiskClass < 2)
+      {
+        gObjectEventCode = 1381;
+      }
+      else if (objectRiskClass < 2 && gObjectRiskClass >= 2)
+      {
+        gObjectEventCode = 1382;
+      }
+      else if (objectRiskClass >= 2)
+      {
+        gObjectEventCode = 1383;
+      }
+      else
+      {
+        gObjectEventCode = 0;
+      }
+      gObjectRiskClass = objectRiskClass;
+      gObjectRiskTsMs = getSimulationTimeMs();
+    }
+    else if (msgId == ethMsgValidationOverride() && ethFramePayloadLen(count) >= 1)
+    {
+      if (ethMatchesSource(address, ethNodeIpTestScn(), port, ethTestScnTxPort()) == 0)
+      {
+        write("[CGW] override unexpected src=%lu port=%lu", address, port);
+      }
+      gForceFailSafeOverride = clampRange(ethGetU8(buffer, 0), 0, 1);
+      gForceFailSafeRxMs = getSimulationTimeMs();
+    }
+  }
+
+  ethArmReceive(gEthSocket, gEthRxBuffer, elcount(gEthRxBuffer));
+}
+
+on start
+{
+  gEthSocket = ethOpenBackboneReceiverSocket(getCgwLocalIp());
+  gEthTxSocket = ethOpenPreferredNodeSocket(getCgwLocalIp(), getCgwTxPort());
+  gEthTargetIp = ethGetDefaultIpAddress();
+  gChassisAlive = 0;
+  gBodyAlive = 0;
+  gInfoAlive = 0;
+  gChassisTsMs = 0;
+  gBodyTsMs = 0;
+  gInfoTsMs = 0;
+  gLastBoundaryStatus = -1;
+  gLastWarningPathStatus = -1;
+  gLastE2eHealthState = -1;
+  gLastFailSafeMode = -1;
+  gVehicleStateAgeMs = 10000;
+  gNavContextAgeMs = 10000;
+  gSteeringAgeMs = 10000;
+  gEmergencyMonAgeMs = 10000;
+  gStartTsMs = getSimulationTimeMs();
+  gVehicleStateTsMs = 0;
+  gNavContextTsMs = 0;
+  gSteeringTsMs = 0;
+  gEmergencyMonTsMs = 0;
+  gBodyGatewayTsMs = 0;
+  gLastRoutingPolicy = -1;
+  gLastObjectTrackValid = -1;
+  gLastObjectFailSafeMode = -1;
+  gLastObjectEventCode = -1;
+  gObjectConfidence = 0;
+  gObjectTrackValid = 0;
+  gObjectRiskClass = 0;
+  gObjectEventCode = 0;
+  gEmergencyContext = 0;
+  gObjectRiskTsMs = 0;
+  gForceFailSafeOverride = 0;
+  gForceFailSafeRxMs = 0;
+  @CoreState::domainBoundaryStatus = 0;
+  @CoreState::warningPathStatus = 1;
+  @CoreState::e2eHealthState = 1;
+  @CoreState::routingPolicy = 0;
+  @Core::decelAssistReq = 0;
+  @CoreState::decelGateReason = 0;
+  @CoreState::selectedAlertEffectiveLevel = 0;
+  @CoreState::selectedAlertEffectiveType = 0;
+  @CoreState::selectedAlertGateReason = 0;
+  @Core::failSafeMode = 1;
+  if (gEthTxSocket == ethInvalidSocket())
+  {
+    write("[CGW] tx socket unavailable");
+  }
+  if (gEthSocket != ethInvalidSocket())
+  {
+    ethStartReceiver(gEthSocket, gEthRxBuffer, elcount(gEthRxBuffer));
+  }
+  setTimer(tBoundaryCheck, 100);
+  write("[CGW] start");
+}
+
+on message frmChassisHealthMsg
+{
+  gChassisAlive = this.ChassisAliveCnt;
+  gChassisTsMs = getSimulationTimeMs();
+}
+
+on message frmBodyHealthMsg
+{
+  gBodyAlive = this.BodyAliveCnt;
+  gBodyTsMs = getSimulationTimeMs();
+}
+
+on message frmBodyGatewayStateMsg
+{
+  gBodyGatewayTsMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleStateTsMs = getSimulationTimeMs();
+}
+
+on message frmSteeringStateCanMsg
+{
+  gSteeringTsMs = getSimulationTimeMs();
+}
+
+on message frmInfotainmentHealthMsg
+{
+  gInfoAlive = this.InfoAliveCnt;
+  gInfoTsMs = getSimulationTimeMs();
+  gNavContextTsMs = gInfoTsMs;
+}
+
+on message frmNavigationRouteMsg
+{
+  gNavContextTsMs = getSimulationTimeMs();
+}
+
+on timer tBoundaryCheck
+{
+  dword nowMs;
+  int chassisAgeMs;
+  int bodyAgeMs;
+  int infoAgeMs;
+  int bodyGatewayAgeMs;
+  int vehicleSignalAgeMs;
+  int navSignalAgeMs;
+  int steeringSignalAgeMs;
+  int boundaryAlive;
+  int warningPathStatus;
+  int e2eHealthState;
+  int failSafeMode;
+  int routingPolicy;
+  int emergencyContext;
+  int emergencyRxAgeMs;
+  int emergencyPathFast;
+  int emergencyPathSlow;
+  int selectedAlertDecisionLevel;
+  int selectedAlertDecisionType;
+  int selectedAlertEffectiveLevel;
+  int selectedAlertEffectiveType;
+  int selectedAlertGateReason;
+  int decelDecisionReq;
+  int driverReleaseReason;
+  int decelAssistReq;
+  int decelGateReason;
+  int timeoutClear;
+  int forceFailSafe;
+  int startupSettling;
+
+  nowMs = getSimulationTimeMs();
+  chassisAgeMs = calcAgeMs(gChassisTsMs, nowMs);
+  bodyAgeMs = calcAgeMs(gBodyTsMs, nowMs);
+  infoAgeMs = calcAgeMs(gInfoTsMs, nowMs);
+  bodyGatewayAgeMs = calcAgeMs(gBodyGatewayTsMs, nowMs);
+  vehicleSignalAgeMs = calcAgeMs(gVehicleStateTsMs, nowMs);
+  navSignalAgeMs = calcAgeMs(gNavContextTsMs, nowMs);
+  steeringSignalAgeMs = calcAgeMs(gSteeringTsMs, nowMs);
+  chassisAgeMs = pickFresherAgeMs(chassisAgeMs,
+                                  pickFresherAgeMs(vehicleSignalAgeMs, steeringSignalAgeMs));
+  bodyAgeMs = pickFresherAgeMs(bodyAgeMs, bodyGatewayAgeMs);
+  infoAgeMs = pickFresherAgeMs(infoAgeMs, navSignalAgeMs);
+  gVehicleStateAgeMs = pickFresherAgeMs(vehicleSignalAgeMs, chassisAgeMs);
+  gNavContextAgeMs = pickFresherAgeMs(navSignalAgeMs, infoAgeMs);
+  gSteeringAgeMs = pickFresherAgeMs(steeringSignalAgeMs, chassisAgeMs);
+  gEmergencyMonAgeMs = calcAgeMs(gEmergencyMonTsMs, nowMs);
+  if (ethIsRecentTick(gEmergencyMonTsMs, 300) == 1)
+  {
+    emergencyContext = clampRange(gEmergencyContext, 0, 2);
+    emergencyRxAgeMs = gEmergencyMonAgeMs;
+  }
+  else
+  {
+    emergencyContext = 0;
+    emergencyRxAgeMs = 10000;
+  }
+  emergencyPathFast = 1;
+  emergencyPathSlow = 1;
+  if (emergencyContext > 0)
+  {
+    emergencyPathFast = 0;
+    emergencyPathSlow = 0;
+    if (gEmergencyMonAgeMs <= 150 || emergencyRxAgeMs <= 150)
+    {
+      emergencyPathFast = 1;
+    }
+    if (gEmergencyMonAgeMs <= 300 || emergencyRxAgeMs <= 300)
+    {
+      emergencyPathSlow = 1;
+    }
+  }
+
+  boundaryAlive = 0;
+  if (chassisAgeMs <= 300 &&
+      bodyAgeMs <= 300 &&
+      infoAgeMs <= 300)
+  {
+    boundaryAlive = 1;
+  }
+
+  forceFailSafe = 0;
+  if (ethIsRecentTick(gForceFailSafeRxMs, 300) == 1 &&
+      gForceFailSafeOverride == 1)
+  {
+    forceFailSafe = 1;
+  }
+  startupSettling = (ethIsRecentTick(gStartTsMs, 500) == 1) ? 1 : 0;
+  timeoutClear = ((((int)@Core::timeoutClear) == 1) ? 1 : 0);
+  if (forceFailSafe == 1)
+  {
+    warningPathStatus = 2;
+  }
+  else if (boundaryAlive == 0 && startupSettling == 1)
+  {
+    warningPathStatus = 1;
+  }
+  else if (boundaryAlive == 1 &&
+           gVehicleStateAgeMs <= 150 &&
+           gNavContextAgeMs <= 150 &&
+           gSteeringAgeMs <= 150 &&
+           emergencyPathFast == 1)
+  {
+    warningPathStatus = 0;
+  }
+  else if (boundaryAlive == 1 &&
+           gVehicleStateAgeMs <= 300 &&
+           gNavContextAgeMs <= 300 &&
+           gSteeringAgeMs <= 300 &&
+           emergencyPathSlow == 1)
+  {
+    warningPathStatus = 1;
+  }
+  else
+  {
+    warningPathStatus = 2;
+  }
+
+  if (forceFailSafe == 1)
+  {
+    e2eHealthState = 0;
+    failSafeMode = 2;
+  }
+  else if (warningPathStatus == 0)
+  {
+    e2eHealthState = 2;
+    failSafeMode = 0;
+  }
+  else if (warningPathStatus == 1)
+  {
+    e2eHealthState = 1;
+    failSafeMode = 1;
+  }
+  else
+  {
+    e2eHealthState = 0;
+    failSafeMode = 2;
+  }
+  if (failSafeMode > 0)
+  {
+    routingPolicy = 0;
+  }
+  else if (emergencyContext > 0)
+  {
+    routingPolicy = 2;
+  }
+  else
+  {
+    routingPolicy = 1;
+  }
+
+  decelDecisionReq = clampRange((int)@Core::decelAssistDecisionReq, 0, 1);
+  driverReleaseReason = clampRange((int)@CoreState::driverReleaseReason, 0, 3);
+  decelAssistReq = decelDecisionReq;
+  if (decelDecisionReq == 0)
+  {
+    decelGateReason = driverReleaseReason;
+  }
+  else
+  {
+    decelGateReason = 0;
+  }
+  if (failSafeMode >= 1 && decelAssistReq == 1)
+  {
+    decelAssistReq = 0;
+    decelGateReason = 3;
+  }
+
+  selectedAlertDecisionLevel = clampRange((int)@CoreState::selectedAlertDecisionLevel, 0, 7);
+  selectedAlertDecisionType = clampRange((int)@CoreState::selectedAlertDecisionType, 0, 15);
+  selectedAlertEffectiveLevel = selectedAlertDecisionLevel;
+  selectedAlertEffectiveType = selectedAlertDecisionType;
+  selectedAlertGateReason = 0;
+
+  if (timeoutClear == 1 ||
+      (boundaryAlive == 0 && (emergencyContext > 0 || selectedAlertDecisionLevel > 0)))
+  {
+    if (selectedAlertEffectiveLevel < 3)
+    {
+      selectedAlertEffectiveLevel = 3;
+    }
+    if (selectedAlertEffectiveType == 0)
+    {
+      selectedAlertEffectiveType = getBoundaryFallbackAlertType(emergencyContext);
+    }
+    selectedAlertGateReason = (timeoutClear == 1) ? 1 : 2;
+  }
+
+  if (failSafeMode >= 1 && (selectedAlertEffectiveLevel > 0 || selectedAlertGateReason != 0))
+  {
+    if (selectedAlertEffectiveLevel < 4)
+    {
+      selectedAlertEffectiveLevel = 4;
+    }
+    if (selectedAlertEffectiveType == 0)
+    {
+      selectedAlertEffectiveType = getBoundaryFallbackAlertType(emergencyContext);
+    }
+    selectedAlertGateReason = 3;
+  }
+
+  @CoreState::domainBoundaryStatus = boundaryAlive;
+  @CoreState::warningPathStatus = warningPathStatus;
+  @CoreState::e2eHealthState = e2eHealthState;
+  @CoreState::routingPolicy = routingPolicy;
+  @Core::decelAssistReq = decelAssistReq;
+  @CoreState::decelGateReason = decelGateReason;
+  @CoreState::selectedAlertEffectiveLevel = selectedAlertEffectiveLevel;
+  @CoreState::selectedAlertEffectiveType = selectedAlertEffectiveType;
+  @CoreState::selectedAlertGateReason = selectedAlertGateReason;
+  @Core::failSafeMode = failSafeMode;
+
+  publishFailSafeState(warningPathStatus, e2eHealthState, failSafeMode, boundaryAlive);
+  publishGatewayState(routingPolicy, warningPathStatus, e2eHealthState, boundaryAlive);
+  publishObjectSafetyState(failSafeMode);
+
+  if (boundaryAlive != gLastBoundaryStatus ||
+      warningPathStatus != gLastWarningPathStatus ||
+      e2eHealthState != gLastE2eHealthState ||
+      failSafeMode != gLastFailSafeMode ||
+      routingPolicy != gLastRoutingPolicy)
+  {
+    write("[CGW] boundary=%d warnPath=%d e2e=%d failSafe=%d routing=%d ages(ch=%d body=%d info=%d veh=%d nav=%d str=%d mon=%d rx=%d)",
+          boundaryAlive,
+          warningPathStatus,
+          e2eHealthState,
+          failSafeMode,
+          routingPolicy,
+          chassisAgeMs,
+          bodyAgeMs,
+          infoAgeMs,
+          gVehicleStateAgeMs,
+          gNavContextAgeMs,
+          gSteeringAgeMs,
+          gEmergencyMonAgeMs,
+          emergencyRxAgeMs);
+    gLastBoundaryStatus = boundaryAlive;
+    gLastWarningPathStatus = warningPathStatus;
+    gLastE2eHealthState = e2eHealthState;
+    gLastFailSafeMode = failSafeMode;
+    gLastRoutingPolicy = routingPolicy;
+  }
+
+  setTimer(tBoundaryCheck, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tBoundaryCheck);
+  ethCloseSocket(gEthTxSocket);
+  gEthTxSocket = ethInvalidSocket();
+  ethCloseSocket(gEthSocket);
+  gEthSocket = ethInvalidSocket();
+}

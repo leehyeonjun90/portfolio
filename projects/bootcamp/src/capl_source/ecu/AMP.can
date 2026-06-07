@@ -1,0 +1,320 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tAmpCycle;
+  int gMediaState;
+  int gMuteState;
+  int gVolumeLevel;
+  int gAudioFocusOwner;
+  int gAudioDuckingLvl;
+  int gVoiceAssistState;
+  int gTtsState;
+  dword gMediaRxMs;
+  dword gAudioFocusRxMs;
+  dword gVoiceAssistRxMs;
+  dword gTtsRxMs;
+  int gLastMediaInputStale;
+  int gLastAudioFocusInputStale;
+  int gLastVoiceInputStale;
+  int gLastTtsInputStale;
+  int gLastAmpMode;
+  int gLastAmpMute;
+  int gLastAmpDucking;
+  int gLastAmpVolume;
+}
+
+int ampMediaLeaseWindowMs()
+{
+  return 300;
+}
+
+int ampMediaHoldWindowMs()
+{
+  return 1500;
+}
+
+int ampAudioFocusLeaseWindowMs()
+{
+  return 300;
+}
+
+int ampAudioFocusHoldWindowMs()
+{
+  return 1500;
+}
+
+int ampVoiceLeaseWindowMs()
+{
+  return 300;
+}
+
+int ampVoiceHoldWindowMs()
+{
+  return 1500;
+}
+
+int ampTtsLeaseWindowMs()
+{
+  return 300;
+}
+
+int ampTtsHoldWindowMs()
+{
+  return 1500;
+}
+
+int deriveBaseVolume(int volumeOverride)
+{
+  volumeOverride = clampRange(volumeOverride, 0, 100);
+  if (volumeOverride <= 0)
+  {
+    return 60;
+  }
+  return volumeOverride;
+}
+
+void traceAmpInputHealth(int mediaInputStale, int audioFocusInputStale,
+                         int voiceInputStale, int ttsInputStale)
+{
+  if (mediaInputStale != gLastMediaInputStale)
+  {
+    if (mediaInputStale == 1)
+    {
+      write("[AMP] media input stale");
+    }
+    else
+    {
+      write("[AMP] media input restored");
+    }
+    gLastMediaInputStale = mediaInputStale;
+  }
+
+  if (audioFocusInputStale != gLastAudioFocusInputStale)
+  {
+    if (audioFocusInputStale == 1)
+    {
+      write("[AMP] audio-focus input stale");
+    }
+    else
+    {
+      write("[AMP] audio-focus input restored");
+    }
+    gLastAudioFocusInputStale = audioFocusInputStale;
+  }
+
+  if (voiceInputStale != gLastVoiceInputStale)
+  {
+    if (voiceInputStale == 1)
+    {
+      write("[AMP] voice-assist input stale");
+    }
+    else
+    {
+      write("[AMP] voice-assist input restored");
+    }
+    gLastVoiceInputStale = voiceInputStale;
+  }
+
+  if (ttsInputStale != gLastTtsInputStale)
+  {
+    if (ttsInputStale == 1)
+    {
+      write("[AMP] tts input stale");
+    }
+    else
+    {
+      write("[AMP] tts input restored");
+    }
+    gLastTtsInputStale = ttsInputStale;
+  }
+}
+
+void publishAmpState()
+{
+  message frmAmpStateMsg mAmp;
+  int mediaInputStale;
+  int audioFocusInputStale;
+  int voiceInputStale;
+  int ttsInputStale;
+  int mediaInputExpired;
+  int audioFocusInputExpired;
+  int voiceInputExpired;
+  int ttsInputExpired;
+  int mediaState;
+  int muteState;
+  int volumeLevel;
+  int audioFocusOwner;
+  int audioDuckingLvl;
+  int voiceAssistState;
+  int ttsState;
+  int ampMode;
+  int ampDucking;
+  int baseVolume;
+
+  mediaInputStale = (ethIsRecentTick(gMediaRxMs, ampMediaLeaseWindowMs()) == 1) ? 0 : 1;
+  audioFocusInputStale = (ethIsRecentTick(gAudioFocusRxMs, ampAudioFocusLeaseWindowMs()) == 1) ? 0 : 1;
+  voiceInputStale = (ethIsRecentTick(gVoiceAssistRxMs, ampVoiceLeaseWindowMs()) == 1) ? 0 : 1;
+  ttsInputStale = (ethIsRecentTick(gTtsRxMs, ampTtsLeaseWindowMs()) == 1) ? 0 : 1;
+  mediaInputExpired = (ethIsRecentTick(gMediaRxMs, ampMediaHoldWindowMs()) == 1) ? 0 : 1;
+  audioFocusInputExpired = (ethIsRecentTick(gAudioFocusRxMs, ampAudioFocusHoldWindowMs()) == 1) ? 0 : 1;
+  voiceInputExpired = (ethIsRecentTick(gVoiceAssistRxMs, ampVoiceHoldWindowMs()) == 1) ? 0 : 1;
+  ttsInputExpired = (ethIsRecentTick(gTtsRxMs, ampTtsHoldWindowMs()) == 1) ? 0 : 1;
+  traceAmpInputHealth(mediaInputStale, audioFocusInputStale, voiceInputStale, ttsInputStale);
+
+  mediaState = gMediaState;
+  muteState = gMuteState;
+  volumeLevel = gVolumeLevel;
+  audioFocusOwner = gAudioFocusOwner;
+  audioDuckingLvl = gAudioDuckingLvl;
+  voiceAssistState = gVoiceAssistState;
+  ttsState = gTtsState;
+  if (mediaInputExpired == 1)
+  {
+    mediaState = 0;
+    muteState = 0;
+    volumeLevel = 20;
+  }
+  if (audioFocusInputExpired == 1)
+  {
+    audioFocusOwner = 0;
+    audioDuckingLvl = 0;
+  }
+  if (voiceInputExpired == 1)
+  {
+    voiceAssistState = 0;
+  }
+  if (ttsInputExpired == 1)
+  {
+    ttsState = 0;
+  }
+
+  baseVolume = deriveBaseVolume((int)@Inject::alertVolumeCmd);
+  @CoreState::baseVolume = baseVolume;
+
+  ampMode = 0;
+  if (voiceAssistState > 0 || ttsState > 0)
+  {
+    ampMode = 2;
+  }
+  else if (mediaState > 0)
+  {
+    ampMode = 1;
+  }
+
+  ampDucking = audioDuckingLvl;
+  if (ttsState > 0 && ampDucking < 4)
+  {
+    ampDucking = 4;
+  }
+  else if (voiceAssistState > 0 && ampDucking < 2)
+  {
+    ampDucking = 2;
+  }
+
+  if (volumeLevel >= 90 || ampDucking >= 6)
+  {
+    ampDucking = clampRange(ampDucking + 1, 0, 7);
+    if (ampMode < 2)
+    {
+      ampMode = 2;
+    }
+  }
+  else if (gAudioFocusOwner > 0 || ampDucking > 0)
+  {
+    if (ampDucking < 2)
+    {
+      ampDucking = 2;
+    }
+    if (ampMode == 0)
+    {
+      ampMode = 1;
+    }
+  }
+
+  mAmp.AmpMode = clampRange(ampMode, 0, 7);
+  mAmp.AmpMute = clampRange(muteState, 0, 1);
+  mAmp.AmpDuckingLvl = clampRange(ampDucking, 0, 7);
+  mAmp.AmpVolumeLevel = clampRange(volumeLevel, 0, 100);
+  @UiRender::renderVolumLevel = mAmp.AmpVolumeLevel;
+  output(mAmp);
+
+  if (mAmp.AmpMode != gLastAmpMode ||
+      mAmp.AmpMute != gLastAmpMute ||
+      mAmp.AmpDuckingLvl != gLastAmpDucking ||
+      mAmp.AmpVolumeLevel != gLastAmpVolume)
+  {
+    gLastAmpMode = mAmp.AmpMode;
+    gLastAmpMute = mAmp.AmpMute;
+    gLastAmpDucking = mAmp.AmpDuckingLvl;
+    gLastAmpVolume = mAmp.AmpVolumeLevel;
+  }
+}
+
+on start
+{
+  gMediaState = 0;
+  gMuteState = 0;
+  gVolumeLevel = 20;
+  gAudioFocusOwner = 0;
+  gAudioDuckingLvl = 0;
+  gVoiceAssistState = 0;
+  gTtsState = 0;
+  gMediaRxMs = 0;
+  gAudioFocusRxMs = 0;
+  gVoiceAssistRxMs = 0;
+  gTtsRxMs = 0;
+  gLastMediaInputStale = 0;
+  gLastAudioFocusInputStale = 0;
+  gLastVoiceInputStale = 0;
+  gLastTtsInputStale = 0;
+  gLastAmpMode = -1;
+  gLastAmpMute = -1;
+  gLastAmpDucking = -1;
+  gLastAmpVolume = -1;
+  @CoreState::baseVolume = deriveBaseVolume(0);
+  @UiRender::renderVolumLevel = 20;
+  setTimer(tAmpCycle, 50);
+  write("[AMP] start");
+}
+
+on timer tAmpCycle
+{
+  publishAmpState();
+  setTimer(tAmpCycle, 50);
+}
+
+on message frmMediaStateMsg
+{
+  gMediaState = clampRange((int)this.MediaState, 0, 7);
+  gMuteState = clampRange((int)this.MuteState, 0, 1);
+  gVolumeLevel = clampRange((int)this.VolumeLevel, 0, 100);
+  gMediaRxMs = getSimulationTimeMs();
+}
+
+on message frmAudioFocusMsg
+{
+  gAudioFocusOwner = clampRange((int)this.AudioFocusOwner, 0, 7);
+  gAudioDuckingLvl = clampRange((int)this.AudioDuckingLvl, 0, 7);
+  gAudioFocusRxMs = getSimulationTimeMs();
+}
+
+on message frmVoiceAssistStateMsg
+{
+  gVoiceAssistState = clampRange((int)this.VoiceAssistState, 0, 7);
+  gVoiceAssistRxMs = getSimulationTimeMs();
+}
+
+on message frmSpeechTtsStateMsg
+{
+  gTtsState = clampRange((int)this.TtsState, 0, 7);
+  gTtsRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tAmpCycle);
+}

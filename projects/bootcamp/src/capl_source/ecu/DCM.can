@@ -1,0 +1,324 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tDcmCycle;
+  int gNavSessionState;
+  int gNavRouteClass;
+  int gAlertLevel;
+  dword gNavRxMs;
+  dword gNotifRxMs;
+  int gSecuritySession;
+  int gAuthState;
+  int gSecurityFault;
+  int gSecurityPolicy;
+  int gLastTraceSession;
+  int gLastTraceAuth;
+  int gLastTraceFault;
+  int gLastTracePolicy;
+  int gLastTraceServiceState;
+  int gLastTraceResponseKind;
+  int gLastTraceReasonCode;
+  int gLastPublishedRequestServiceState;
+  int gLastPublishedRequestResponseKind;
+  int gLastPublishedRequestReasonCode;
+}
+
+int diagEthBackboneBusCode()
+{
+  return 1;
+}
+
+int diagDcmTargetCode()
+{
+  return 2;
+}
+
+void publishDiagRequestObservation(int requestSid, int serviceState, int responseKind, int reasonCode)
+{
+  int requestTarget;
+  int requestDidHigh;
+  int requestDidLow;
+  int requestSourceBus;
+  long requestCounter;
+  int requestSemanticChanged;
+
+  requestTarget = diagDcmTargetCode();
+  requestDidHigh = 0;
+  requestDidLow = 0;
+  requestSourceBus = diagEthBackboneBusCode();
+  requestCounter = (long)@Diag::RequestCounter;
+  requestSemanticChanged = 0;
+
+  if (gLastPublishedRequestServiceState != serviceState ||
+      gLastPublishedRequestResponseKind != responseKind ||
+      gLastPublishedRequestReasonCode != reasonCode)
+  {
+    requestSemanticChanged = 1;
+  }
+
+  if ((int)@Diag::LastRequestTarget != requestTarget ||
+      (int)@Diag::LastRequestSid != requestSid ||
+      (int)@Diag::LastRequestDidHigh != requestDidHigh ||
+      (int)@Diag::LastRequestDidLow != requestDidLow ||
+      (int)@Diag::LastRequestSourceBus != requestSourceBus ||
+      requestSemanticChanged == 1)
+  {
+    requestCounter = requestCounter + 1;
+    @Diag::LastRequestTarget = requestTarget;
+    @Diag::LastRequestSid = requestSid;
+    @Diag::LastRequestDidHigh = requestDidHigh;
+    @Diag::LastRequestDidLow = requestDidLow;
+    @Diag::LastRequestSourceBus = requestSourceBus;
+    @Diag::RequestCounter = requestCounter;
+    @Diag::LastRequestTimeMs = getSimulationTimeMs();
+    gLastPublishedRequestServiceState = serviceState;
+    gLastPublishedRequestResponseKind = responseKind;
+    gLastPublishedRequestReasonCode = reasonCode;
+  }
+}
+
+void publishDiagResponseObservation(int responseCode, int responseOk, int serviceState, int responseKind)
+{
+  int responseTarget;
+  int responseSourceBus;
+  int responseData0;
+  int responseData1;
+  long responseCounter;
+
+  responseTarget = diagDcmTargetCode();
+  responseSourceBus = diagEthBackboneBusCode();
+  responseData0 = clampRange(serviceState, 0, 255);
+  responseData1 = clampRange(responseKind, 0, 255);
+  responseCounter = (long)@Diag::ResponseCounter;
+
+  if ((int)@Diag::LastResponseTarget != responseTarget ||
+      (int)@Diag::LastResponseCode != responseCode ||
+      (int)@Diag::LastResponseData0 != responseData0 ||
+      (int)@Diag::LastResponseData1 != responseData1 ||
+      (int)@Diag::LastResponseOk != responseOk ||
+      (int)@Diag::LastResponseSourceBus != responseSourceBus)
+  {
+    responseCounter = responseCounter + 1;
+    @Diag::LastResponseTarget = responseTarget;
+    @Diag::LastResponseCode = responseCode;
+    @Diag::LastResponseData0 = responseData0;
+    @Diag::LastResponseData1 = responseData1;
+    @Diag::LastResponseOk = responseOk;
+    @Diag::LastResponseSourceBus = responseSourceBus;
+    @Diag::ResponseCounter = responseCounter;
+    @Diag::LastResponseTimeMs = getSimulationTimeMs();
+  }
+}
+
+void publishReservedDiagServiceSeam(int diagStage)
+{
+  int serviceState;
+  int responseKind;
+  int reasonCode;
+  int responseCode;
+  int responseOk;
+
+  serviceState = 0;
+  responseKind = 0;
+  reasonCode = 0;
+
+  if (diagStage >= 3)
+  {
+    serviceState = 2;
+    responseKind = 4;
+    reasonCode = 2;
+  }
+  else if (diagStage == 2)
+  {
+    serviceState = 3;
+    responseKind = 2;
+    reasonCode = 3;
+  }
+  else if (diagStage == 1)
+  {
+    serviceState = 1;
+    responseKind = 1;
+    reasonCode = 0;
+  }
+
+  @Diag::ServiceState = serviceState;
+  @Diag::ResponseKind = responseKind;
+  @Diag::ReasonCode = reasonCode;
+  responseOk = (responseKind == 1) ? 1 : 0;
+
+  if (responseKind == 1)
+  {
+    responseCode = 0x62;
+  }
+  else if (responseKind == 2)
+  {
+    responseCode = 0x7F;
+  }
+  else if (responseKind == 3)
+  {
+    responseCode = 0x78;
+  }
+  else if (responseKind == 4)
+  {
+    responseCode = 0x7F;
+  }
+  else
+  {
+    responseCode = 0x00;
+  }
+
+  publishDiagRequestObservation(0x22,
+                                serviceState,
+                                responseKind,
+                                reasonCode);
+  publishDiagResponseObservation(responseCode,
+                                 responseOk,
+                                 serviceState,
+                                 responseKind);
+}
+
+void publishDcmStateTrace()
+{
+  int serviceState;
+  int responseKind;
+  int reasonCode;
+
+  serviceState = clampRange((int)@Diag::ServiceState, 0, 3);
+  responseKind = clampRange((int)@Diag::ResponseKind, 0, 4);
+  reasonCode = clampRange((int)@Diag::ReasonCode, 0, 65535);
+  if (gSecuritySession != gLastTraceSession ||
+      gAuthState != gLastTraceAuth ||
+      gSecurityFault != gLastTraceFault ||
+      gSecurityPolicy != gLastTracePolicy ||
+      serviceState != gLastTraceServiceState ||
+      responseKind != gLastTraceResponseKind ||
+      reasonCode != gLastTraceReasonCode)
+  {
+    write("[DCM] session=%d service=%d resp=%d reason=%d auth=%d fault=%d policy=%d",
+          gSecuritySession,
+          serviceState,
+          responseKind,
+          reasonCode,
+          gAuthState,
+          gSecurityFault,
+          gSecurityPolicy);
+    gLastTraceSession = gSecuritySession;
+    gLastTraceAuth = gAuthState;
+    gLastTraceFault = gSecurityFault;
+    gLastTracePolicy = gSecurityPolicy;
+    gLastTraceServiceState = serviceState;
+    gLastTraceResponseKind = responseKind;
+    gLastTraceReasonCode = reasonCode;
+  }
+}
+
+on start
+{
+  gNavSessionState = 0;
+  gNavRouteClass = 0;
+  gAlertLevel = 0;
+  gNavRxMs = 0;
+  gNotifRxMs = 0;
+  gSecuritySession = 0;
+  gAuthState = 0;
+  gSecurityFault = 0;
+  gSecurityPolicy = 0;
+  gLastTraceSession = -1;
+  gLastTraceAuth = -1;
+  gLastTraceFault = -1;
+  gLastTracePolicy = -1;
+  gLastTraceServiceState = -1;
+  gLastTraceResponseKind = -1;
+  gLastTraceReasonCode = -1;
+  gLastPublishedRequestServiceState = -1;
+  gLastPublishedRequestResponseKind = -1;
+  gLastPublishedRequestReasonCode = -1;
+  @Diag::ServiceState = 0;
+  @Diag::ResponseKind = 0;
+  @Diag::ReasonCode = 0;
+  @Diag::LastRequestTarget = 0;
+  @Diag::LastRequestSid = 0;
+  @Diag::LastRequestDidHigh = 0;
+  @Diag::LastRequestDidLow = 0;
+  @Diag::LastRequestSourceBus = 0;
+  @Diag::RequestCounter = 0;
+  @Diag::LastRequestTimeMs = 0;
+  @Diag::LastResponseTarget = 0;
+  @Diag::LastResponseCode = 0;
+  @Diag::LastResponseData0 = 0;
+  @Diag::LastResponseData1 = 0;
+  @Diag::LastResponseOk = 0;
+  @Diag::LastResponseSourceBus = 0;
+  @Diag::ResponseCounter = 0;
+  @Diag::LastResponseTimeMs = 0;
+  setTimer(tDcmCycle, 100);
+  write("[DCM] start");
+}
+
+on timer tDcmCycle
+{
+  int diagStage;
+  int routeActive;
+  int alertLevel;
+  int boundaryAlive;
+  int serviceContext;
+  int warningPathStatus;
+  int failSafeMode;
+
+  routeActive = (ethIsRecentTick(gNavRxMs, 300) == 1 &&
+                 (gNavSessionState > 0 || gNavRouteClass > 0)) ? 1 : 0;
+  alertLevel = (ethIsRecentTick(gNotifRxMs, 300) == 1) ? gAlertLevel : 0;
+  boundaryAlive = clampRange((int)@CoreState::domainBoundaryStatus, 0, 1);
+  warningPathStatus = boundaryAlive == 1 ? clampRange((int)@CoreState::warningPathStatus, 0, 2) : 2;
+  failSafeMode = boundaryAlive == 1 ? clampRange((int)@Core::failSafeMode, 0, 2) : 2;
+  serviceContext = ethHasBoundaryServiceContext(routeActive, alertLevel);
+  diagStage = ethDiagBoundaryStage(routeActive,
+                                   alertLevel,
+                                   boundaryAlive,
+                                   warningPathStatus,
+                                   failSafeMode);
+
+  gSecuritySession = 0;
+  if (serviceContext == 1)
+  {
+    gSecuritySession = 1;
+  }
+  if (diagStage == 1 && routeActive == 1)
+  {
+    gSecuritySession = 2;
+  }
+
+  gAuthState = (serviceContext == 1) ? 1 : 0;
+  if (diagStage == 1)
+  {
+    gAuthState = 2;
+  }
+
+  gSecurityFault = ethDiagStageToSecurityFault(diagStage);
+  gSecurityPolicy = ethDiagStageToPolicy(diagStage);
+  publishReservedDiagServiceSeam(diagStage);
+  publishDcmStateTrace();
+  setTimer(tDcmCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tDcmCycle);
+}
+
+on message frmNavModuleStateMsg
+{
+  gNavSessionState = clampRange((int)this.NavSessionState, 0, 3);
+  gNavRouteClass = clampRange((int)this.NavRouteClass, 0, 3);
+  gNavRxMs = getSimulationTimeMs();
+}
+
+on message frmClusterNotifMsg
+{
+  gAlertLevel = clampRange((int)this.ClusterNotifArg, 0, 7);
+  gNotifRxMs = getSimulationTimeMs();
+}

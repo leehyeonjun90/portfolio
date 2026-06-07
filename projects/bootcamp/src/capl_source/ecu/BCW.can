@@ -1,0 +1,232 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tBcwCycle;
+  int gRearDetected;
+  int gLaneChangeBlock;
+  int gRearRiskLevel;
+  int gMergeConflict;
+  int gTurnLampState;
+  dword gRearRadarRxMs;
+  int gWarningPathStatus;
+  int gE2eHealthState;
+  int gFailSafeMode;
+  dword gFailSafeRxMs;
+  int gLastRearRadarInputStale;
+  int gLastWarnLeft;
+  int gLastWarnRight;
+  int gLastMergeConflict;
+  int gLastRiskClass;
+  int gLastAlertLevel;
+  int gLastPathReady;
+}
+
+int bcwPathReady()
+{
+  if (ethIsRecentTick(gFailSafeRxMs, 300) == 0)
+  {
+    return 0;
+  }
+  if (gWarningPathStatus >= 2 || gE2eHealthState == 0 || gFailSafeMode >= 2)
+  {
+    return 0;
+  }
+  return 1;
+}
+
+int deriveBcwRiskClass(int rearRiskLevel)
+{
+  if (rearRiskLevel >= 75)
+  {
+    return 4;
+  }
+  if (rearRiskLevel >= 65)
+  {
+    return 3;
+  }
+  if (rearRiskLevel >= 55)
+  {
+    return 2;
+  }
+  if (rearRiskLevel >= 45)
+  {
+    return 1;
+  }
+  return 0;
+}
+
+int deriveBcwAlertLevel(int warnLeft, int warnRight, int objectRiskClass)
+{
+  if ((warnLeft == 1 || warnRight == 1) && objectRiskClass >= 4)
+  {
+    return 4;
+  }
+  if (warnLeft == 1 || warnRight == 1)
+  {
+    return 3;
+  }
+  return 0;
+}
+
+void traceBcwInputHealth(int rearRadarInputStale)
+{
+  if (rearRadarInputStale != gLastRearRadarInputStale)
+  {
+    if (rearRadarInputStale == 1)
+    {
+      write("[BCW] rear-radar input stale");
+    }
+    else
+    {
+      write("[BCW] rear-radar input restored");
+    }
+    gLastRearRadarInputStale = rearRadarInputStale;
+  }
+}
+
+void publishBcwState()
+{
+  message frmBcwStateMsg mBcw;
+  int rearRadarInputStale;
+  int rearDetected;
+  int laneChangeBlock;
+  int rearRiskLevel;
+  int mergeConflict;
+  int turnLampState;
+  int objectRiskClass;
+  int alertLevel;
+  int warnLeft;
+  int warnRight;
+  int pathReady;
+
+  rearRadarInputStale = (ethIsRecentTick(gRearRadarRxMs, 300) == 1) ? 0 : 1;
+  traceBcwInputHealth(rearRadarInputStale);
+
+  rearDetected = gRearDetected;
+  laneChangeBlock = gLaneChangeBlock;
+  rearRiskLevel = gRearRiskLevel;
+  mergeConflict = gMergeConflict;
+  turnLampState = gTurnLampState;
+  if (rearRadarInputStale == 1)
+  {
+    rearDetected = 0;
+    laneChangeBlock = 0;
+    rearRiskLevel = 0;
+    mergeConflict = 0;
+    turnLampState = 0;
+  }
+
+  pathReady = bcwPathReady();
+  objectRiskClass = deriveBcwRiskClass(rearRiskLevel);
+  warnLeft = 0;
+  warnRight = 0;
+
+  if (rearDetected == 1 &&
+      (mergeConflict == 1 || laneChangeBlock == 1) &&
+      objectRiskClass >= 2)
+  {
+    if (turnLampState == 1)
+    {
+      warnLeft = 1;
+    }
+    else if (turnLampState == 2)
+    {
+      warnRight = 1;
+    }
+  }
+  alertLevel = deriveBcwAlertLevel(warnLeft, warnRight, objectRiskClass);
+  if (pathReady == 0)
+  {
+    warnLeft = 0;
+    warnRight = 0;
+    mergeConflict = 0;
+    objectRiskClass = 0;
+    alertLevel = 0;
+  }
+
+  mBcw.BcwWarnLeft = warnLeft;
+  mBcw.BcwWarnRight = warnRight;
+  mBcw.MergeConflict = mergeConflict;
+  mBcw.ObjectRiskClass = objectRiskClass;
+  mBcw.SelectedAlertLevel = alertLevel;
+  output(mBcw);
+
+  if (pathReady != gLastPathReady ||
+      warnLeft != gLastWarnLeft ||
+      warnRight != gLastWarnRight ||
+      mergeConflict != gLastMergeConflict ||
+      objectRiskClass != gLastRiskClass ||
+      alertLevel != gLastAlertLevel)
+  {
+    write("[BCW] path=%d left=%d right=%d merge=%d riskClass=%d rearRisk=%d alert=%d",
+          pathReady,
+          warnLeft,
+          warnRight,
+          mergeConflict,
+          objectRiskClass,
+          rearRiskLevel,
+          alertLevel);
+    gLastPathReady = pathReady;
+    gLastWarnLeft = warnLeft;
+    gLastWarnRight = warnRight;
+    gLastMergeConflict = mergeConflict;
+    gLastRiskClass = objectRiskClass;
+    gLastAlertLevel = alertLevel;
+  }
+}
+
+on start
+{
+  gRearDetected = 0;
+  gLaneChangeBlock = 0;
+  gRearRiskLevel = 0;
+  gMergeConflict = 0;
+  gTurnLampState = 0;
+  gRearRadarRxMs = 0;
+  gWarningPathStatus = 1;
+  gE2eHealthState = 1;
+  gFailSafeMode = 1;
+  gFailSafeRxMs = 0;
+  gLastRearRadarInputStale = 0;
+  gLastPathReady = -1;
+  gLastWarnLeft = -1;
+  gLastWarnRight = -1;
+  gLastMergeConflict = -1;
+  gLastRiskClass = -1;
+  gLastAlertLevel = -1;
+  setTimer(tBcwCycle, 100);
+  write("[BCW] start");
+}
+
+on timer tBcwCycle
+{
+  publishBcwState();
+  setTimer(tBcwCycle, 100);
+}
+
+on message frmRearRadarMasterStateMsg
+{
+  gRearDetected = clampRange((int)this.RearObjectDetected, 0, 1);
+  gLaneChangeBlock = clampRange((int)this.LaneChangeBlock, 0, 1);
+  gRearRiskLevel = clampRange((int)this.RearRiskLevel, 0, 100);
+  gMergeConflict = clampRange((int)this.MergeConflict, 0, 1);
+  gTurnLampState = clampRange((int)this.TurnLampState, 0, 3);
+  gRearRadarRxMs = getSimulationTimeMs();
+}
+
+on message frmAdasDomainStateMsg
+{
+  gWarningPathStatus = clampRange((int)this.WarningPathStatus, 0, 2);
+  gE2eHealthState = clampRange((int)this.E2eHealthState, 0, 2);
+  gFailSafeMode = clampRange((int)this.FailSafeMode, 0, 2);
+  gFailSafeRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tBcwCycle);
+}

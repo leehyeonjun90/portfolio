@@ -1,0 +1,174 @@
+﻿includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tIsgCycle;
+  int gBatterySoc;
+  int gChargingState;
+  int gDriveMode;
+  int gEngineState;
+  int gDriveState;
+  int gVehicleSpeed;
+  dword gFuelBatteryRxMs;
+  dword gVehicleRxMs;
+  int gLastState;
+  int gLastReady;
+  int gLastRegen;
+  int gLastInputStale;
+  int gLastVehicleInputStale;
+}
+
+on start
+{
+  gBatterySoc = 95;
+  gChargingState = 0;
+  gDriveMode = 0;
+  gEngineState = 0;
+  gDriveState = 0;
+  gVehicleSpeed = 0;
+  gFuelBatteryRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastState = -1;
+  gLastReady = -1;
+  gLastRegen = -1;
+  gLastInputStale = 1;
+  gLastVehicleInputStale = 1;
+  setTimer(tIsgCycle, 100);
+  write("[ISG] start");
+}
+
+on message frmFuelBatteryStateMsg
+{
+  gBatterySoc = clampRange((int)this.BatterySoc, 0, 100);
+  gChargingState = clampRange((int)this.ChargingState, 0, 3);
+  gFuelBatteryRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleModeMsg
+{
+  gDriveMode = clampRange((int)this.DriveMode, 0, 7);
+  gEngineState = clampRange((int)this.PowertrainState, 0, 255);
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on timer tIsgCycle
+{
+  message frmIsgStateMsg mIsg;
+  int driveState;
+  int speed;
+  int inputStale;
+  int vehicleInputStale;
+  int batterySoc;
+  int chargingState;
+  int isgState;
+  int restartReady;
+  int recuperationLvl;
+  inputStale = 1;
+  if (gFuelBatteryRxMs != 0 &&
+      (getSimulationTimeMs() - gFuelBatteryRxMs) <= 300)
+  {
+    inputStale = 0;
+  }
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+
+  batterySoc = gBatterySoc;
+  chargingState = gChargingState;
+  driveState = gDriveState;
+  speed = gVehicleSpeed;
+  if (inputStale == 1)
+  {
+    batterySoc = 50;
+    chargingState = 0;
+  }
+  if (vehicleInputStale == 1)
+  {
+    driveState = (gEngineState > 0) ? 3 : 0;
+    speed = 0;
+  }
+
+  if (inputStale != gLastInputStale)
+  {
+    if (inputStale == 1)
+    {
+      write("[ISG] fuel-battery input stale");
+    }
+    else
+    {
+      write("[ISG] fuel-battery input restored");
+    }
+    gLastInputStale = inputStale;
+  }
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[ISG] vehicle input stale");
+    }
+    else
+    {
+      write("[ISG] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+
+  if (gEngineState == 0)
+  {
+    isgState = 0;
+    restartReady = 0;
+    recuperationLvl = 0;
+  }
+  else if (driveState == 0 && batterySoc < 95)
+  {
+    isgState = 1;
+    restartReady = 1;
+    recuperationLvl = 0;
+  }
+  else if (driveState > 0 && batterySoc < 75 && gDriveMode == 1)
+  {
+    isgState = 2;
+    restartReady = 1;
+    recuperationLvl = 10;
+  }
+  else
+  {
+    isgState = 3;
+    restartReady = 1;
+    recuperationLvl = clampRange((speed / 2) + ((chargingState == 2) ? 20 : 0), 0, 100);
+  }
+
+  mIsg.IsgState = clampRange(isgState, 0, 7);
+  mIsg.RestartReady = clampRange(restartReady, 0, 1);
+  mIsg.RecuperationLvl = clampRange(recuperationLvl, 0, 100);
+  output(mIsg);
+
+  if (mIsg.IsgState != gLastState ||
+      mIsg.RestartReady != gLastReady ||
+      mIsg.RecuperationLvl != gLastRegen)
+  {
+    write("[ISG] state=%d ready=%d regen=%d soc=%d mode=%d",
+          mIsg.IsgState,
+          mIsg.RestartReady,
+          mIsg.RecuperationLvl,
+          batterySoc,
+          gDriveMode);
+    gLastState = mIsg.IsgState;
+    gLastReady = mIsg.RestartReady;
+    gLastRegen = mIsg.RecuperationLvl;
+  }
+
+  setTimer(tIsgCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tIsgCycle);
+}

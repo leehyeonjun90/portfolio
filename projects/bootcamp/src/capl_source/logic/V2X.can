@@ -1,0 +1,861 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tRxCycle;
+  msTimer tWatchdog;
+  msTimer tTimeoutClearPulse;
+  msTimer tEventTrace100;
+  msTimer tTransport100;
+  msTimer tSceneTimer;
+  long gEthSocket;
+  long gEthTxSocket;
+  dword gEthTargetIp;
+  char gEthRxBuffer[64];
+  int gActiveEmergencyType;
+  int gActiveEmergencyDirection;
+  int gActiveEta;
+  int gActiveSourceId;
+  dword gActiveLastRxMs;
+  int gIngressEmergencyType;
+  int gIngressEmergencyDirection;
+  int gIngressEta;
+  int gIngressSourceId;
+  int gIngressAlertState;
+  int gIngressPending;
+  int gLastEmergencyContext;
+  int gLastTimeoutClear;
+  int gLastRecordedAlertType;
+  int gLastRecordedAlertLevel;
+  int gLastRecordedWarningCode;
+  int gPrevPoliceDispatch;
+  int gPrevAmbDispatch;
+  int gLastMonContext;
+  int gLastMonTimeoutClear;
+  int gLastTransportStatus;
+  int gLastTransportType;
+  int gLastTransportSourceId;
+  int gLastTransportDirection;
+  int gLastIngressHeartbeatSeen;
+  dword gLastAcceptedAlertSrcIp;
+  dword gLastAcceptedAlertSrcPort;
+  dword gLastRejectedAlertSrcIp;
+  dword gLastRejectedAlertSrcPort;
+  int gCrossMyCarEnd;
+  int gCrossAmbEnd;
+}
+
+
+dword getCurrentTick32()
+{
+  return getSimulationTimeMs();
+}
+
+void mirrorLastEmergencyRx(dword tickValue)
+{
+  gActiveLastRxMs = tickValue;
+  @CoreState::lastEmergencyRxMs = tickValue;
+}
+
+void publishNormalizedEmergencyIngress()
+{
+  int manualAlertOverride;
+  int compatEmergencyType;
+  int compatAlertState;
+  int compatDirection;
+  int compatEta;
+  int compatSourceId;
+
+  manualAlertOverride = clampRange((int)@Inject::manualAlertOverrideCmd, 0, 255);
+  if (manualAlertOverride == 0 && (((int)@Inject::emergencyActiveCmd) > 0))
+  {
+    manualAlertOverride = 1;
+  }
+  compatEmergencyType = clampRange(gActiveEmergencyType, 0, 2);
+  compatAlertState = (compatEmergencyType > 0) ? 1 : 0;
+  compatDirection = clampRange(gActiveEmergencyDirection, 0, 3);
+  compatEta = clampRange(gActiveEta, 0, 255);
+  compatSourceId = clampRange(gActiveSourceId, 0, 255);
+
+  if (manualAlertOverride > 0)
+  {
+    compatEmergencyType = clampRange((int)@Inject::emergencyType, 0, 2);
+    if (compatEmergencyType == 0)
+    {
+      compatEmergencyType = clampRange(gActiveEmergencyType, 0, 2);
+    }
+    compatAlertState = ((((int)@Inject::emergencyActiveCmd) > 0) && compatEmergencyType > 0) ? 1 : 0;
+    if (compatAlertState == 0)
+    {
+      compatAlertState = (compatEmergencyType > 0) ? 1 : 0;
+    }
+    if (compatAlertState == 1)
+    {
+      compatDirection = clampRange((int)@Inject::emergencyDirection, 0, 3);
+      compatEta = clampRange((int)@Inject::emergencyEtaSec, 0, 255);
+      compatSourceId = clampRange((int)@Inject::emergencySourceId, 0, 255);
+      if (compatEta == 0)
+      {
+        compatEta = clampRange(gActiveEta, 0, 255);
+      }
+      if (compatSourceId == 0)
+      {
+        compatSourceId = clampRange(gActiveSourceId, 0, 255);
+      }
+    }
+    else
+    {
+      compatDirection = 0;
+      compatEta = 255;
+      compatSourceId = 255;
+    }
+  }
+
+  @CoreState::emergencyIngressDirection = compatDirection;
+  @CoreState::emergencyIngressEtaSec = compatEta;
+  @CoreState::emergencyIngressSourceId = compatSourceId;
+}
+
+int getCompatV2xFrame(int emergencyType, int etaSec)
+{
+  int proximityFrame;
+
+  if (emergencyType <= 0)
+  {
+    return 0;
+  }
+
+  etaSec = clampRange(etaSec, 0, 255);
+  proximityFrame = 7 - (etaSec / 32);
+  proximityFrame = clampRange(proximityFrame, 0, 7);
+
+  if (emergencyType == 2)
+  {
+    return 8 + proximityFrame;
+  }
+  if (emergencyType == 1)
+  {
+    return proximityFrame;
+  }
+  return 0;
+}
+
+void resetCrossSceneAnimation()
+{
+  @V2X::MyCarFrame = 0;
+  @V2X::AmbFrame = 0;
+  @V2X::CrossAnimAlertActive = 0;
+}
+
+void startCrossSceneAnimation()
+{
+  cancelTimer(tSceneTimer);
+  resetCrossSceneAnimation();
+  setTimer(tSceneTimer, 50);
+}
+
+void bumpIngressHeartbeat()
+{
+  int heartbeat;
+
+  heartbeat = clampRange((int)@V2X::ingressHeartbeat, 0, 65535) + 1;
+  if (heartbeat > 65535)
+  {
+    heartbeat = 1;
+  }
+  gLastIngressHeartbeatSeen = heartbeat;
+  @V2X::ingressHeartbeat = heartbeat;
+}
+
+int getEmergencyPriorityRank(int emergencyType)
+{
+  if (emergencyType == 2)
+  {
+    return 2;
+  }
+  if (emergencyType == 1)
+  {
+    return 1;
+  }
+  return 0;
+}
+
+int getV2XTxPort()
+{
+  return ethBackbonePort() + 1;
+}
+
+dword getV2xRxLocalIp()
+{
+  return getV2xLocalIp();
+}
+
+dword getV2xLocalIp()
+{
+  return IpGetAddressAsNumber("192.168.1.9");
+}
+
+int isHigherPriority(int newType, int newEta, int newSourceId,
+                     int activeType, int activeEta, int activeSourceId)
+{
+  int newRank;
+  int activeRank;
+
+  if (activeType == 0)
+  {
+    return 1;
+  }
+  newRank = getEmergencyPriorityRank(newType);
+  activeRank = getEmergencyPriorityRank(activeType);
+  if (newRank != activeRank)
+  {
+    return (newRank > activeRank);
+  }
+  if (newEta != activeEta)
+  {
+    return (newEta < activeEta);
+  }
+  return (newSourceId < activeSourceId);
+}
+
+void setTimeoutClear(int value)
+{
+  value = (value == 1) ? 1 : 0;
+  if (value != gLastTimeoutClear)
+  {
+    @Core::timeoutClear = value;
+    gLastTimeoutClear = value;
+  }
+}
+
+void updateEmergencyContext()
+{
+  int manualAlertOverride;
+  int donorEmergencyType;
+  int donorAlertState;
+  int contextValue;
+
+  contextValue = gActiveEmergencyType;
+  manualAlertOverride = clampRange((int)@Inject::manualAlertOverrideCmd, 0, 255);
+  if (manualAlertOverride == 0 && (((int)@Inject::emergencyActiveCmd) > 0))
+  {
+    manualAlertOverride = 1;
+  }
+  if (manualAlertOverride > 0)
+  {
+    donorEmergencyType = clampRange((int)@Inject::emergencyType, 0, 2);
+    if (donorEmergencyType == 0)
+    {
+      donorEmergencyType = clampRange(gActiveEmergencyType, 0, 2);
+    }
+    donorAlertState = (((int)@Inject::emergencyActiveCmd) > 0) ? 1 : 0;
+    if (donorAlertState == 0)
+    {
+      donorAlertState = (donorEmergencyType > 0) ? 1 : 0;
+    }
+    contextValue = (donorAlertState == 1) ? donorEmergencyType : 0;
+  }
+  if (contextValue < 0 || contextValue > 2)
+  {
+    contextValue = 0;
+  }
+
+  if (contextValue != gLastEmergencyContext)
+  {
+    @Core::emergencyContext = contextValue;
+    gLastEmergencyContext = contextValue;
+  }
+}
+
+void clearEmergencyState()
+{
+  gActiveEmergencyType = 0;
+  gActiveEmergencyDirection = 0;
+  gActiveEta = 255;
+  gActiveSourceId = 255;
+}
+
+void stageEmergencyIngress(int vehicleType, int status, int sourceId, int etaSec, int direction)
+{
+  gIngressEmergencyType = clampRange(vehicleType, 0, 2);
+  gIngressEmergencyDirection = clampRange(direction, 0, 3);
+  gIngressEta = clampRange(etaSec, 0, 255);
+  gIngressSourceId = clampRange(sourceId, 0, 255);
+  gIngressAlertState = (status == 1) ? 1 : 0;
+  gIngressPending = 1;
+}
+
+void emitEmergencyBroadcast(int vehicleType, int status, int sourceId, int etaSec, int direction)
+{
+  char frame[8];
+  long txSocket;
+
+  txSocket = gEthTxSocket;
+  if (txSocket == ethInvalidSocket())
+  {
+    return;
+  }
+
+  ethInitFrame(frame, ethMsgEmergencyAlert(), 4);
+  ethSetU8(frame, 0,
+           clampRange(vehicleType, 0, 2) |
+           (clampRange(direction, 0, 3) << 2));
+  ethSetU8(frame, 1, clampRange(etaSec, 0, 255));
+  ethSetU8(frame, 2, clampRange(sourceId, 0, 255));
+  ethSetU8(frame, 3, (status == 1) ? 1 : 0);
+  ethSendFrame(txSocket, gEthTargetIp, ethMsgEmergencyAlert(), frame, 4);
+}
+
+void pushEmergencyMonitor()
+{
+  char frame[4];
+  int emergencyContext;
+  int timeoutClear;
+
+  emergencyContext = clampRange(gLastEmergencyContext, 0, 255);
+  timeoutClear = (gLastTimeoutClear == 1) ? 1 : 0;
+
+  if (gEthTxSocket != ethInvalidSocket())
+  {
+    ethInitFrame(frame, ethMsgEmergencyMonitor(), 2);
+    ethSetU8(frame, 0, emergencyContext);
+    ethSetU8(frame, 1, timeoutClear);
+    ethSendFrame(gEthTxSocket, gEthTargetIp, ethMsgEmergencyMonitor(), frame, 2);
+  }
+
+  if (emergencyContext != gLastMonContext || timeoutClear != gLastMonTimeoutClear)
+  {
+    write("[V2X] mon(context=%d timeoutClear=%d)", emergencyContext, timeoutClear);
+    gLastMonContext = emergencyContext;
+    gLastMonTimeoutClear = timeoutClear;
+  }
+}
+
+void applyEmergencyIngress(int vehicleType, int status, int sourceId, int etaSec, int direction)
+{
+  stageEmergencyIngress(vehicleType, status, sourceId, etaSec, direction);
+}
+
+void logAlertIngressAccepted(dword address, dword port)
+{
+  if (address != gLastAcceptedAlertSrcIp || port != gLastAcceptedAlertSrcPort)
+  {
+    write("[V2X] ingress accept src=%lu port=%lu", address, port);
+    gLastAcceptedAlertSrcIp = address;
+    gLastAcceptedAlertSrcPort = port;
+  }
+}
+
+void logAlertIngressRejected(dword address, dword port)
+{
+  if (address != gLastRejectedAlertSrcIp || port != gLastRejectedAlertSrcPort)
+  {
+    write("[V2X] ingress unexpected src=%lu port=%lu", address, port);
+    gLastRejectedAlertSrcIp = address;
+    gLastRejectedAlertSrcPort = port;
+  }
+}
+
+void OnUdpReceiveFrom(dword socket, long result, dword address, dword port, char buffer[], dword count)
+{
+  int msgId;
+  int typeAndDirection;
+
+  if (socket != gEthSocket)
+  {
+    return;
+  }
+  if (result == 0)
+  {
+    msgId = ethFrameMsgId(buffer, count);
+    if (msgId == ethMsgEmergencyAlert() && ethFramePayloadLen(count) >= 4)
+    {
+      if (ethMatchesSelfSource(address, ethNodeIpV2x(), port, getV2XTxPort()) == 1)
+      {
+        ethArmReceive(gEthSocket, gEthRxBuffer, elcount(gEthRxBuffer));
+        return;
+      }
+      if (ethMatchesSource(address, ethNodeIpTestScn(), port, ethTestScnTxPort()) == 0)
+      {
+        logAlertIngressRejected(address, port);
+      }
+      else
+      {
+        logAlertIngressAccepted(address, port);
+      }
+      typeAndDirection = ethGetU8(buffer, 0);
+      applyEmergencyIngress(typeAndDirection & 0x3,
+                            ethGetU8(buffer, 3) & 0x1,
+                            ethGetU8(buffer, 2),
+                            ethGetU8(buffer, 1),
+                            (typeAndDirection >> 2) & 0x3);
+    }
+  }
+
+  ethArmReceive(gEthSocket, gEthRxBuffer, elcount(gEthRxBuffer));
+}
+
+void publishActiveEmergencyToV2X()
+{
+  int manualAlertOverride;
+  int compatEmergencyType;
+  int compatEmergencyDirection;
+  int compatEta;
+  int compatSourceId;
+  int compatAlertState;
+
+  manualAlertOverride = clampRange((int)@Inject::manualAlertOverrideCmd, 0, 255);
+  if (manualAlertOverride == 0 && (((int)@Inject::emergencyActiveCmd) > 0))
+  {
+    manualAlertOverride = 1;
+  }
+  if (manualAlertOverride == 0)
+  {
+    compatEmergencyType = gActiveEmergencyType;
+    compatEmergencyDirection = gActiveEmergencyDirection;
+    compatEta = gActiveEta;
+    compatSourceId = gActiveSourceId;
+    compatAlertState = (gActiveEmergencyType > 0) ? 1 : 0;
+    @V2X::emergencyType = compatEmergencyType;
+    @V2X::emergencyDirection = compatEmergencyDirection;
+    @V2X::eta = compatEta;
+    @V2X::sourceId = compatSourceId;
+    @V2X::alertState = compatAlertState;
+  }
+  else
+  {
+    compatEmergencyType = clampRange((int)@Inject::emergencyType, 0, 2);
+    if (compatEmergencyType == 0)
+    {
+      compatEmergencyType = clampRange(gActiveEmergencyType, 0, 2);
+    }
+    compatEmergencyDirection = clampRange((int)@Inject::emergencyDirection, 0, 3);
+    compatEta = clampRange((int)@Inject::emergencyEtaSec, 0, 255);
+    compatSourceId = clampRange((int)@Inject::emergencySourceId, 0, 255);
+    compatAlertState = ((((int)@Inject::emergencyActiveCmd) > 0) && compatEmergencyType > 0) ? 1 : 0;
+    if (compatEta == 0)
+    {
+      compatEta = clampRange(gActiveEta, 0, 255);
+    }
+    if (compatSourceId == 0)
+    {
+      compatSourceId = clampRange(gActiveSourceId, 0, 255);
+    }
+    if (compatAlertState == 0)
+    {
+      compatAlertState = (compatEmergencyType > 0) ? 1 : 0;
+    }
+  }
+  @V2X::v2xFrame = (compatAlertState == 1) ? getCompatV2xFrame(compatEmergencyType, compatEta) : 0;
+  @Infotainment::emergencySound = (compatAlertState == 1 && compatEmergencyType > 0) ? 1 : 0;
+  publishNormalizedEmergencyIngress();
+}
+
+void syncLegacyDispatchInputs()
+{
+  int policeDispatch;
+  int ambulanceDispatch;
+  int direction;
+  int eta;
+  int sourceId;
+
+  policeDispatch = (((int)@Test::compatPoliceDispatch) > 0) ? 1 : 0;
+  ambulanceDispatch = (((int)@Test::compatAmbulanceDispatch) > 0) ? 1 : 0;
+  direction = clampRange((int)@Test::compatEmergencyDirection, 0, 3);
+  eta = clampRange((int)@Test::compatEmergencyEta, 0, 255);
+  sourceId = clampRange((int)@Test::compatEmergencySourceId, 0, 255);
+
+  if (ambulanceDispatch == 1)
+  {
+    if (eta == 0 || eta == 255)
+    {
+      eta = 20;
+    }
+    if (sourceId == 0 || sourceId == 255)
+    {
+      sourceId = 2;
+    }
+    stageEmergencyIngress(2, 1, sourceId, eta, direction);
+  }
+  else if (policeDispatch == 1)
+  {
+    if (eta == 0 || eta == 255)
+    {
+      eta = 30;
+    }
+    if (sourceId == 0 || sourceId == 255)
+    {
+      sourceId = 1;
+    }
+    stageEmergencyIngress(1, 1, sourceId, eta, direction);
+  }
+  else if (gPrevAmbDispatch == 1)
+  {
+    if (gActiveEmergencyType == 2 &&
+        gActiveSourceId > 0 &&
+        gActiveSourceId != 255)
+    {
+      sourceId = gActiveSourceId;
+    }
+    else
+    {
+      sourceId = 2;
+    }
+    stageEmergencyIngress(2, 0, sourceId, 0, gActiveEmergencyDirection);
+  }
+  else if (gPrevPoliceDispatch == 1)
+  {
+    if (gActiveEmergencyType == 1 &&
+        gActiveSourceId > 0 &&
+        gActiveSourceId != 255)
+    {
+      sourceId = gActiveSourceId;
+    }
+    else
+    {
+      sourceId = 1;
+    }
+    stageEmergencyIngress(1, 0, sourceId, 0, gActiveEmergencyDirection);
+  }
+
+  gPrevPoliceDispatch = policeDispatch;
+  gPrevAmbDispatch = ambulanceDispatch;
+}
+
+void publishTransportFrames()
+{
+  int txStatus;
+  int txType;
+  int txSourceId;
+  int txEta;
+  int txDirection;
+
+  txStatus = (gActiveEmergencyType > 0) ? 1 : 0;
+  txType = clampRange(gActiveEmergencyType, 0, 2);
+  txSourceId = clampRange(gActiveSourceId, 0, 255);
+  txEta = clampRange(gActiveEta, 0, 255);
+  txDirection = clampRange(gActiveEmergencyDirection, 0, 3);
+
+  if (txStatus == 1)
+  {
+    emitEmergencyBroadcast(txType, 1, txSourceId, txEta, txDirection);
+    gLastTransportStatus = 1;
+    gLastTransportType = txType;
+    gLastTransportSourceId = txSourceId;
+    gLastTransportDirection = txDirection;
+  }
+  else if (gLastTransportStatus == 1)
+  {
+    emitEmergencyBroadcast(clampRange(gLastTransportType, 1, 2),
+                           0,
+                           clampRange(gLastTransportSourceId, 0, 255),
+                           0,
+                           clampRange(gLastTransportDirection, 0, 3));
+    gLastTransportStatus = 0;
+  }
+
+  pushEmergencyMonitor();
+}
+
+void recordAlertEvent()
+{
+  int alertType;
+  int alertLevel;
+  int warningCode;
+  int eventPhase;
+  int alertSnapshotId;
+
+  alertType = clampRange((int)@CoreState::selectedAlertEffectiveType, 0, 15);
+  alertLevel = clampRange((int)@CoreState::selectedAlertEffectiveLevel, 0, 7);
+  if (alertType == 0 && alertLevel == 0)
+  {
+    alertType = clampRange((int)@Core::selectedAlertType, 0, 15);
+    alertLevel = clampRange((int)@Core::selectedAlertLevel, 0, 7);
+  }
+  alertSnapshotId = clampRange((int)@CoreState::arbitrationSnapshotId, 0, 65535);
+  warningCode = clampRange((int)@Cluster::warningTextCode, 0, 255);
+  eventPhase = 0;
+
+  if (alertLevel > 0 && gLastRecordedAlertLevel == 0)
+  {
+    eventPhase = 1;
+  }
+  else if (alertLevel == 0 && gLastRecordedAlertLevel > 0)
+  {
+    eventPhase = 2;
+  }
+  else if (alertType != gLastRecordedAlertType ||
+           alertLevel != gLastRecordedAlertLevel ||
+           warningCode != gLastRecordedWarningCode)
+  {
+    eventPhase = 3;
+  }
+
+  if (eventPhase != 0)
+  {
+    @CoreState::lastAlertEventType = alertType;
+    @CoreState::lastAlertEventLevel = alertLevel;
+    @CoreState::lastAlertEventCode = warningCode;
+    @CoreState::lastAlertEventPhase = eventPhase;
+    write("[EMS_ALERT] event phase=%d type=%d level=%d code=%d snap=%d",
+          eventPhase, alertType, alertLevel, warningCode,
+          alertSnapshotId);
+    gLastRecordedAlertType = alertType;
+    gLastRecordedAlertLevel = alertLevel;
+    gLastRecordedWarningCode = warningCode;
+  }
+}
+
+on start
+{
+  gEthSocket = ethOpenBackboneReceiverSocket(getV2xLocalIp());
+  gEthTxSocket = ethOpenPreferredNodeSocket(getV2xLocalIp(), getV2XTxPort());
+  gEthTargetIp = ethGetDefaultIpAddress();
+  clearEmergencyState();
+  gActiveLastRxMs = 0;
+  gIngressEmergencyType = 0;
+  gIngressEmergencyDirection = 0;
+  gIngressEta = 255;
+  gIngressSourceId = 255;
+  gIngressAlertState = 0;
+  gIngressPending = 0;
+  @CoreState::lastEmergencyRxMs = 0;
+  gLastEmergencyContext = -1;
+  gLastTimeoutClear = -1;
+  gLastRecordedAlertType = -1;
+  gLastRecordedAlertLevel = -1;
+  gLastRecordedWarningCode = -1;
+  gPrevPoliceDispatch = 0;
+  gPrevAmbDispatch = 0;
+  gLastMonContext = -1;
+  gLastMonTimeoutClear = -1;
+  gLastTransportStatus = 0;
+  gLastTransportType = 0;
+  gLastTransportSourceId = 0;
+  gLastTransportDirection = 0;
+  gLastIngressHeartbeatSeen = 0;
+  gLastAcceptedAlertSrcIp = 0;
+  gLastAcceptedAlertSrcPort = 0;
+  gLastRejectedAlertSrcIp = 0;
+  gLastRejectedAlertSrcPort = 0;
+  gCrossMyCarEnd = 26;
+  gCrossAmbEnd = 31;
+  @V2X::ingressHeartbeat = 0;
+  @V2X::AnimationTrigger = 0;
+  resetCrossSceneAnimation();
+  if (gEthTxSocket == ethInvalidSocket())
+  {
+    write("[V2X] tx socket unavailable");
+  }
+  publishActiveEmergencyToV2X();
+  updateEmergencyContext();
+  setTimeoutClear(0);
+  if (gEthSocket != ethInvalidSocket())
+  {
+    ethStartReceiver(gEthSocket, gEthRxBuffer, elcount(gEthRxBuffer));
+  }
+  setTimer(tRxCycle, 10);
+  setTimer(tWatchdog, 1000);
+  setTimer(tEventTrace100, 100);
+  setTimer(tTransport100, 100);
+  write("[V2X] start");
+}
+
+/* Legacy panel compat: dispatch-level sysvar inputs only.
+   Native verification and runtime ingress use transport frames. */
+on timer tRxCycle
+{
+  dword nowMs;
+  int accepted;
+  int hasIngressEvent;
+  int emergencyType;
+  int emergencyDirection;
+  int eta;
+  int sourceId;
+  int alertState;
+
+  syncLegacyDispatchInputs();
+  nowMs              = getCurrentTick32();
+  accepted           = 0;
+  hasIngressEvent    = 0;
+
+  emergencyType = 0;
+  emergencyDirection = 0;
+  eta = 255;
+  sourceId = 255;
+  alertState = 0;
+  if (gIngressPending == 1)
+  {
+    emergencyType = gIngressEmergencyType;
+    emergencyDirection = gIngressEmergencyDirection;
+    eta = gIngressEta;
+    sourceId = gIngressSourceId;
+    alertState = gIngressAlertState;
+    gIngressPending = 0;
+    hasIngressEvent = 1;
+  }
+
+  if (hasIngressEvent == 1 && alertState == 1 &&
+      (emergencyType == 1 || emergencyType == 2))
+  {
+    if (isHigherPriority(emergencyType, eta, sourceId,
+                         gActiveEmergencyType, gActiveEta, gActiveSourceId))
+    {
+      gActiveEmergencyType      = emergencyType;
+      gActiveEmergencyDirection = emergencyDirection;
+      gActiveEta                = eta;
+      gActiveSourceId           = sourceId;
+      accepted = 1;
+    }
+    else if (emergencyType == gActiveEmergencyType &&
+             sourceId == gActiveSourceId)
+    {
+      gActiveEmergencyDirection = emergencyDirection;
+      gActiveEta                = eta;
+      accepted = 1;
+    }
+
+    if (accepted == 1)
+    {
+      mirrorLastEmergencyRx(nowMs);
+      bumpIngressHeartbeat();
+      publishActiveEmergencyToV2X();
+      setTimeoutClear(0);
+      setTimer(tWatchdog, 1000);
+    }
+  }
+  else if (hasIngressEvent == 1 && alertState == 0)
+  {
+    if (gActiveEmergencyType != 0 &&
+        emergencyType == gActiveEmergencyType &&
+        sourceId == gActiveSourceId)
+    {
+      clearEmergencyState();
+      bumpIngressHeartbeat();
+      publishActiveEmergencyToV2X();
+      updateEmergencyContext();
+    }
+  }
+
+  updateEmergencyContext();
+  setTimer(tRxCycle, 10);
+}
+
+on timer tWatchdog
+{
+  dword nowMs;
+
+  nowMs = getCurrentTick32();
+  if (gActiveEmergencyType != 0 && (nowMs - gActiveLastRxMs) >= 1000)
+  {
+    clearEmergencyState();
+    bumpIngressHeartbeat();
+    publishActiveEmergencyToV2X();
+    updateEmergencyContext();
+    setTimeoutClear(1);
+    setTimer(tTimeoutClearPulse, 200);
+    write("[V2X] watchdog clear");
+  }
+  setTimer(tWatchdog, 1000);
+}
+
+on timer tTimeoutClearPulse
+{
+  setTimeoutClear(0);
+}
+
+on timer tEventTrace100
+{
+  recordAlertEvent();
+  setTimer(tEventTrace100, 100);
+}
+
+on timer tTransport100
+{
+  publishTransportFrames();
+  setTimer(tTransport100, 100);
+}
+
+on sysvar V2X::AnimationTrigger
+{
+  if (((int)@V2X::AnimationTrigger) == 1)
+  {
+    startCrossSceneAnimation();
+  }
+  else
+  {
+    cancelTimer(tSceneTimer);
+    resetCrossSceneAnimation();
+  }
+}
+
+on timer tSceneTimer
+{
+  int isFinished;
+  int ambFrame;
+  int myCarFrame;
+
+  isFinished = 1;
+  ambFrame = clampRange((int)@V2X::AmbFrame, 0, gCrossAmbEnd);
+  myCarFrame = clampRange((int)@V2X::MyCarFrame, 0, gCrossMyCarEnd);
+
+  if (ambFrame < gCrossAmbEnd)
+  {
+    ambFrame = ambFrame + 1;
+    @V2X::AmbFrame = ambFrame;
+    isFinished = 0;
+
+    if (ambFrame == 7)
+    {
+      @V2X::CrossAnimAlertActive = 1;
+    }
+    if (ambFrame == 25)
+    {
+      @V2X::CrossAnimAlertActive = 0;
+      write("[V2X] cross scene ambulance frame 25: alert clear");
+    }
+  }
+
+  if (ambFrame < 15 || ambFrame >= 25)
+  {
+    if (myCarFrame < gCrossMyCarEnd)
+    {
+      myCarFrame = myCarFrame + 1;
+      @V2X::MyCarFrame = myCarFrame;
+      isFinished = 0;
+    }
+  }
+  else
+  {
+    isFinished = 0;
+  }
+
+  if (isFinished == 0)
+  {
+    setTimer(tSceneTimer, 50);
+  }
+  else
+  {
+    @V2X::AnimationTrigger = 0;
+    write("[V2X] cross scene animation finished and reset");
+  }
+}
+
+on stopMeasurement
+{
+  cancelTimer(tRxCycle);
+  cancelTimer(tWatchdog);
+  cancelTimer(tTimeoutClearPulse);
+  cancelTimer(tEventTrace100);
+  cancelTimer(tTransport100);
+  cancelTimer(tSceneTimer);
+  @V2X::AnimationTrigger = 0;
+  resetCrossSceneAnimation();
+  ethCloseSocket(gEthTxSocket);
+  gEthTxSocket = ethInvalidSocket();
+  ethCloseSocket(gEthSocket);
+  gEthSocket = ethInvalidSocket();
+}

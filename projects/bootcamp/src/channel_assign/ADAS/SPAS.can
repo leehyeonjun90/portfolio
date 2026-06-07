@@ -1,0 +1,154 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tSpasCycle;
+  int gVehicleSpeed;
+  int gSteeringInput;
+  dword gVehicleRxMs;
+  dword gSteeringRxMs;
+  int gLastVehicleInputStale;
+  int gLastSteeringInputStale;
+  int gLastActive;
+  int gLastStage;
+  int gLastAssistReq;
+  int gLastSpeed;
+}
+
+void traceSpasInputHealth(int vehicleInputStale, int steeringInputStale)
+{
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[SPAS] vehicle input stale");
+    }
+    else
+    {
+      write("[SPAS] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+
+  if (steeringInputStale != gLastSteeringInputStale)
+  {
+    if (steeringInputStale == 1)
+    {
+      write("[SPAS] steering input stale");
+    }
+    else
+    {
+      write("[SPAS] steering input restored");
+    }
+    gLastSteeringInputStale = steeringInputStale;
+  }
+}
+
+void publishSpasState()
+{
+  message frmSpasStateMsg mSpas;
+  int vehicleInputStale;
+  int steeringInputStale;
+  int vehicleSpeed;
+  int steeringInput;
+  int active;
+  int stage;
+  int assistReq;
+
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  steeringInputStale = (ethIsRecentTick(gSteeringRxMs, 300) == 1) ? 0 : 1;
+  traceSpasInputHealth(vehicleInputStale, steeringInputStale);
+
+  vehicleSpeed = gVehicleSpeed;
+  steeringInput = gSteeringInput;
+  if (vehicleInputStale == 1)
+  {
+    vehicleSpeed = 0;
+  }
+  if (steeringInputStale == 1)
+  {
+    steeringInput = 0;
+  }
+
+  active = 0;
+  stage = 0;
+  assistReq = 0;
+
+  /* Do not arm parking steer assist at idle without steering intent. */
+  if (vehicleInputStale == 0 && vehicleSpeed <= 15 && steeringInput == 1)
+  {
+    active = 1;
+    stage = 1;
+  }
+  if (vehicleInputStale == 0 && steeringInputStale == 0 && vehicleSpeed <= 8 && steeringInput == 1)
+  {
+    active = 1;
+    stage = 2;
+    assistReq = 1;
+  }
+
+  mSpas.SpasActive = active;
+  mSpas.SpasStage = stage;
+  mSpas.SteeringAssistReq = assistReq;
+  mSpas.VehicleSpeed = vehicleSpeed;
+  output(mSpas);
+
+  if (active != gLastActive ||
+      stage != gLastStage ||
+      assistReq != gLastAssistReq ||
+      vehicleSpeed != gLastSpeed)
+  {
+    write("[SPAS] active=%d stage=%d assist=%d speed=%d steerIn=%d",
+          active,
+          stage,
+          assistReq,
+          vehicleSpeed,
+          steeringInput);
+    gLastActive = active;
+    gLastStage = stage;
+    gLastAssistReq = assistReq;
+    gLastSpeed = vehicleSpeed;
+  }
+}
+
+on start
+{
+  gVehicleSpeed = 0;
+  gSteeringInput = 0;
+  gVehicleRxMs = 0;
+  gSteeringRxMs = 0;
+  gLastVehicleInputStale = 0;
+  gLastSteeringInputStale = 0;
+  gLastActive = -1;
+  gLastStage = -1;
+  gLastAssistReq = -1;
+  gLastSpeed = -1;
+  setTimer(tSpasCycle, 100);
+  write("[SPAS] start");
+}
+
+on timer tSpasCycle
+{
+  publishSpasState();
+  setTimer(tSpasCycle, 100);
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on message frmSteeringStateCanMsg
+{
+  gSteeringInput = clampRange((int)this.SteeringState, 0, 1);
+  gSteeringRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tSpasCycle);
+}

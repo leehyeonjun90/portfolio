@@ -1,0 +1,142 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tDmsCycle;
+  int gDriverSeatBelt;
+  int gVehicleSpeed;
+  dword gSeatBeltRxMs;
+  dword gVehicleRxMs;
+  int gLastSeatBeltInputStale;
+  int gLastVehicleInputStale;
+  int gLastActive;
+  int gLastAttention;
+  int gLastFatigueWarn;
+  int gLastSeatBelt;
+}
+
+void traceDmsInputHealth(int seatBeltInputStale, int vehicleInputStale)
+{
+  if (seatBeltInputStale != gLastSeatBeltInputStale)
+  {
+    if (seatBeltInputStale == 1)
+    {
+      write("[DMS] seat-belt input stale");
+    }
+    else
+    {
+      write("[DMS] seat-belt input restored");
+    }
+    gLastSeatBeltInputStale = seatBeltInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[DMS] vehicle input stale");
+    }
+    else
+    {
+      write("[DMS] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+void publishDmsState()
+{
+  message frmDmsStateMsg mDms;
+  int vehicleSpeed;
+  int seatBeltInputStale;
+  int vehicleInputStale;
+  int driverSeatBelt;
+  int active;
+  int attentionLevel;
+  int fatigueWarn;
+
+  vehicleSpeed = gVehicleSpeed;
+  seatBeltInputStale = (ethIsRecentTick(gSeatBeltRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  traceDmsInputHealth(seatBeltInputStale, vehicleInputStale);
+
+  driverSeatBelt = gDriverSeatBelt;
+  if (vehicleInputStale == 1)
+  {
+    vehicleSpeed = 0;
+  }
+  if (seatBeltInputStale == 1)
+  {
+    driverSeatBelt = 1;
+  }
+
+  active = vehicleSpeed >= 20 ? 1 : 0;
+  attentionLevel = 1;
+  fatigueWarn = 0;
+
+  mDms.DriverMonitorActive = active;
+  mDms.AttentionLevel = attentionLevel;
+  mDms.FatigueWarn = fatigueWarn;
+  mDms.DriverSeatBelt = driverSeatBelt;
+  mDms.VehicleSpeed = vehicleSpeed;
+  output(mDms);
+
+  if (active != gLastActive ||
+      attentionLevel != gLastAttention ||
+      fatigueWarn != gLastFatigueWarn ||
+      driverSeatBelt != gLastSeatBelt)
+  {
+    write("[DMS] active=%d attention=%d fatigue=%d belt=%d speed=%d",
+          active,
+          attentionLevel,
+          fatigueWarn,
+          driverSeatBelt,
+          vehicleSpeed);
+    gLastActive = active;
+    gLastAttention = attentionLevel;
+    gLastFatigueWarn = fatigueWarn;
+    gLastSeatBelt = driverSeatBelt;
+  }
+}
+
+on start
+{
+  gDriverSeatBelt = 1;
+  gVehicleSpeed = 0;
+  gSeatBeltRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastSeatBeltInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastActive = -1;
+  gLastAttention = -1;
+  gLastFatigueWarn = -1;
+  gLastSeatBelt = -1;
+  setTimer(tDmsCycle, 100);
+  write("[DMS] start");
+}
+
+on message frmSeatBeltStateMsg
+{
+  gDriverSeatBelt = clampRange((int)this.DriverSeatBelt, 0, 1);
+  gSeatBeltRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on timer tDmsCycle
+{
+  publishDmsState();
+  setTimer(tDmsCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tDmsCycle);
+}

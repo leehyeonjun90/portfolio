@@ -1,0 +1,267 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tSgwCycle;
+  int gIboxLinkMode;
+  int gIboxRouteState;
+  int gIboxServiceFlags;
+  int gNavSessionState;
+  int gNavRouteClass;
+  int gNavSpeedLimit;
+  int gVehicleSpeed;
+  int gAlertLevel;
+  int gFailSafeMode;
+  int gBoundaryAlive;
+  int gWarningPathStatus;
+  dword gNavRxMs;
+  dword gVehicleRxMs;
+  dword gNotifRxMs;
+  int gLastSecuritySession;
+  int gLastAuthState;
+  int gLastSecurityFault;
+  int gLastSecurityPolicy;
+}
+
+void publishReservedDiagSecuritySeam(int diagStage, int securitySession, int authState)
+{
+  int securityState;
+  int routeOwner;
+
+  securityState = 0;
+  if (diagStage >= 3)
+  {
+    securityState = 3;
+  }
+  else if (diagStage == 2)
+  {
+    securityState = 2;
+  }
+  else if (diagStage == 1)
+  {
+    securityState = 1;
+  }
+  else if (securitySession > 0 || authState > 0)
+  {
+    securityState = 1;
+  }
+
+  routeOwner = 0;
+  if (diagStage >= 2)
+  {
+    routeOwner = 1;
+  }
+  else if (diagStage == 1)
+  {
+    routeOwner = 3;
+  }
+  else if (securitySession > 0 || authState > 0)
+  {
+    routeOwner = 2;
+  }
+  else if (gIboxLinkMode > 0 || gIboxRouteState > 0 || gIboxServiceFlags > 0)
+  {
+    routeOwner = 1;
+  }
+
+  @Diag::SecurityState = securityState;
+  @Diag::RouteOwner = routeOwner;
+}
+
+void publishSecurityState()
+{
+  int diagStage;
+  int securitySession;
+  int authState;
+  int keyPresence;
+  int securityFault;
+  int securityPolicy;
+  int routeActive;
+  int guidedRouteActive;
+  int serviceContext;
+  int speedLimit;
+  int vehicleSpeed;
+  int alertLevel;
+  int testerPresentActive;
+
+  routeActive = (ethIsRecentTick(gNavRxMs, 300) == 1 &&
+                 (gNavSessionState > 0 || gNavRouteClass > 0)) ? 1 : 0;
+  guidedRouteActive = (ethIsRecentTick(gNavRxMs, 300) == 1 && gNavRouteClass == 3) ? 1 : 0;
+  speedLimit = (ethIsRecentTick(gNavRxMs, 300) == 1) ? gNavSpeedLimit : 0;
+  vehicleSpeed = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? gVehicleSpeed : 0;
+  alertLevel = (ethIsRecentTick(gNotifRxMs, 300) == 1) ? gAlertLevel : 0;
+  gBoundaryAlive = clampRange((int)@CoreState::domainBoundaryStatus, 0, 1);
+  gWarningPathStatus = gBoundaryAlive == 1 ? clampRange((int)@CoreState::warningPathStatus, 0, 2) : 2;
+  gFailSafeMode = gBoundaryAlive == 1 ? clampRange((int)@Core::failSafeMode, 0, 2) : 2;
+  if (gBoundaryAlive == 0)
+  {
+    gWarningPathStatus = 2;
+    gFailSafeMode = 2;
+  }
+  serviceContext = ethHasBoundaryServiceContext(routeActive, alertLevel);
+  diagStage = ethDiagBoundaryStage(routeActive,
+                                   alertLevel,
+                                   gBoundaryAlive,
+                                   gWarningPathStatus,
+                                   gFailSafeMode);
+
+  gIboxLinkMode = 0;
+  if (serviceContext == 1)
+  {
+    gIboxLinkMode = 1;
+  }
+  if (diagStage == 1 && routeActive == 1)
+  {
+    gIboxLinkMode = 2;
+  }
+
+  gIboxRouteState = 0;
+  if (routeActive == 1)
+  {
+    gIboxRouteState = 1;
+  }
+  if (guidedRouteActive == 1)
+  {
+    gIboxRouteState = 2;
+  }
+
+  gIboxServiceFlags = 0;
+  if (routeActive == 1)
+  {
+    gIboxServiceFlags = gIboxServiceFlags | 1;
+  }
+  if (alertLevel > 0)
+  {
+    gIboxServiceFlags = gIboxServiceFlags | 2;
+  }
+  if (diagStage >= 2)
+  {
+    gIboxServiceFlags = gIboxServiceFlags | 4;
+  }
+  if (diagStage == 1 &&
+      routeActive == 1 &&
+      speedLimit > 0 &&
+      vehicleSpeed > speedLimit)
+  {
+    gIboxServiceFlags = gIboxServiceFlags | 8;
+  }
+
+  securitySession = 0;
+  if (serviceContext == 1)
+  {
+    securitySession = 1;
+  }
+  if (diagStage == 1 && routeActive == 1)
+  {
+    securitySession = 2;
+  }
+
+  authState = 0;
+  if (serviceContext == 1)
+  {
+    authState = 1;
+  }
+  if (diagStage == 1)
+  {
+    authState = 2;
+  }
+
+  keyPresence = ((gIboxServiceFlags & 1) != 0) ? 1 : 0;
+
+  securityFault = ethDiagStageToSecurityFault(diagStage);
+  securityPolicy = ethDiagStageToPolicy(diagStage);
+  testerPresentActive = (routeActive == 1 || securitySession > 0 || authState > 0) ? 1 : 0;
+
+  publishReservedDiagSecuritySeam(diagStage, securitySession, authState);
+  @Diag::SessionState = securitySession;
+  @Diag::TesterPresentActive = testerPresentActive;
+  @Diag::GatewayOpen = routeActive;
+  @Diag::AuthState = authState;
+  @Diag::SecurityFault = securityFault;
+  @Diag::SecurityPolicy = securityPolicy;
+
+  if (securitySession != gLastSecuritySession ||
+      authState != gLastAuthState ||
+      securityFault != gLastSecurityFault ||
+      securityPolicy != gLastSecurityPolicy)
+  {
+    write("[SGW] session=%d auth=%d key=%d fault=%d policy=%d route=%d service=0x%X",
+          securitySession,
+          authState,
+          keyPresence,
+          securityFault,
+          securityPolicy,
+          gIboxRouteState,
+          gIboxServiceFlags);
+    gLastSecuritySession = securitySession;
+    gLastAuthState = authState;
+    gLastSecurityFault = securityFault;
+    gLastSecurityPolicy = securityPolicy;
+  }
+}
+
+on start
+{
+  gIboxLinkMode = 0;
+  gIboxRouteState = 0;
+  gIboxServiceFlags = 0;
+  gNavSessionState = 0;
+  gNavRouteClass = 0;
+  gNavSpeedLimit = 0;
+  gVehicleSpeed = 0;
+  gAlertLevel = 0;
+  gFailSafeMode = 1;
+  gBoundaryAlive = 0;
+  gWarningPathStatus = 2;
+  gNavRxMs = 0;
+  gVehicleRxMs = 0;
+  gNotifRxMs = 0;
+  gLastSecuritySession = -1;
+  gLastAuthState = -1;
+  gLastSecurityFault = -1;
+  gLastSecurityPolicy = -1;
+  @Diag::SecurityState = 0;
+  @Diag::RouteOwner = 0;
+  @Diag::SessionState = 0;
+  @Diag::TesterPresentActive = 0;
+  @Diag::GatewayOpen = 0;
+  @Diag::AuthState = 0;
+  @Diag::SecurityFault = 0;
+  @Diag::SecurityPolicy = 0;
+  setTimer(tSgwCycle, 100);
+  write("[SGW] start");
+}
+
+on timer tSgwCycle
+{
+  publishSecurityState();
+  setTimer(tSgwCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tSgwCycle);
+}
+
+on message frmNavModuleStateMsg
+{
+  gNavSessionState = clampRange((int)this.NavSessionState, 0, 3);
+  gNavRouteClass = clampRange((int)this.NavRouteClass, 0, 3);
+  gNavSpeedLimit = clampRange((int)this.NavSpeedLimit, 0, 255);
+  gNavRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on message frmClusterNotifMsg
+{
+  gAlertLevel = clampRange((int)this.ClusterNotifArg, 0, 7);
+  gNotifRxMs = getSimulationTimeMs();
+}

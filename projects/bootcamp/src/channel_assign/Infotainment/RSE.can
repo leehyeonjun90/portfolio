@@ -1,0 +1,260 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tRseCycle;
+  int gMediaSource;
+  int gMediaState;
+  int gMuteState;
+  int gVolumeLevel;
+  int gAudioFocusOwner;
+  int gAudioDuckingLvl;
+  int gTrackType;
+  int gProjectionType;
+  int gProjectionState;
+  dword gMediaRxMs;
+  dword gAudioFocusRxMs;
+  dword gMediaMetaRxMs;
+  dword gProjectionRxMs;
+  int gLastMediaInputStale;
+  int gLastAudioFocusInputStale;
+  int gLastMediaMetaInputStale;
+  int gLastProjectionInputStale;
+  int gLastPlaybackState;
+  int gLastSource;
+  int gLastLinkState;
+  int gLastContentType;
+}
+
+void traceRseInputHealth(int mediaInputStale, int audioFocusInputStale,
+                         int mediaMetaInputStale, int projectionInputStale)
+{
+  if (mediaInputStale != gLastMediaInputStale)
+  {
+    if (mediaInputStale == 1)
+    {
+      write("[RSE] media input stale");
+    }
+    else
+    {
+      write("[RSE] media input restored");
+    }
+    gLastMediaInputStale = mediaInputStale;
+  }
+
+  if (audioFocusInputStale != gLastAudioFocusInputStale)
+  {
+    if (audioFocusInputStale == 1)
+    {
+      write("[RSE] audio-focus input stale");
+    }
+    else
+    {
+      write("[RSE] audio-focus input restored");
+    }
+    gLastAudioFocusInputStale = audioFocusInputStale;
+  }
+
+  if (mediaMetaInputStale != gLastMediaMetaInputStale)
+  {
+    if (mediaMetaInputStale == 1)
+    {
+      write("[RSE] media-meta input stale");
+    }
+    else
+    {
+      write("[RSE] media-meta input restored");
+    }
+    gLastMediaMetaInputStale = mediaMetaInputStale;
+  }
+
+  if (projectionInputStale != gLastProjectionInputStale)
+  {
+    if (projectionInputStale == 1)
+    {
+      write("[RSE] projection input stale");
+    }
+    else
+    {
+      write("[RSE] projection input restored");
+    }
+    gLastProjectionInputStale = projectionInputStale;
+  }
+}
+
+void publishRseState()
+{
+  message frmRseStateMsg mRse;
+  int mediaInputStale;
+  int audioFocusInputStale;
+  int mediaMetaInputStale;
+  int projectionInputStale;
+  int mediaSource;
+  int mediaState;
+  int muteState;
+  int volumeLevel;
+  int audioFocusOwner;
+  int audioDuckingLvl;
+  int trackType;
+  int projectionType;
+  int projectionState;
+  int playbackState;
+  int linkState;
+  int volumeProfile;
+  int zoneMode;
+
+  mediaInputStale = (ethIsRecentTick(gMediaRxMs, 300) == 1) ? 0 : 1;
+  audioFocusInputStale = (ethIsRecentTick(gAudioFocusRxMs, 300) == 1) ? 0 : 1;
+  mediaMetaInputStale = (ethIsRecentTick(gMediaMetaRxMs, 300) == 1) ? 0 : 1;
+  projectionInputStale = (ethIsRecentTick(gProjectionRxMs, 300) == 1) ? 0 : 1;
+  traceRseInputHealth(mediaInputStale, audioFocusInputStale,
+                      mediaMetaInputStale, projectionInputStale);
+
+  mediaSource = gMediaSource;
+  mediaState = gMediaState;
+  muteState = gMuteState;
+  volumeLevel = gVolumeLevel;
+  audioFocusOwner = gAudioFocusOwner;
+  audioDuckingLvl = gAudioDuckingLvl;
+  trackType = gTrackType;
+  projectionType = gProjectionType;
+  projectionState = gProjectionState;
+  if (mediaInputStale == 1)
+  {
+    mediaSource = 0;
+    mediaState = 0;
+    muteState = 0;
+    volumeLevel = 20;
+  }
+  if (audioFocusInputStale == 1)
+  {
+    audioFocusOwner = 0;
+    audioDuckingLvl = 0;
+  }
+  if (mediaMetaInputStale == 1)
+  {
+    trackType = 0;
+  }
+  if (projectionInputStale == 1)
+  {
+    projectionType = 0;
+    projectionState = 0;
+  }
+
+  playbackState = clampRange(mediaState, 0, 7);
+  if (muteState == 1 || audioFocusOwner > 0)
+  {
+    playbackState = 2;
+  }
+
+  linkState = 0;
+  if (projectionState > 0)
+  {
+    linkState = 1;
+    if (projectionType > 0)
+    {
+      linkState = 2;
+    }
+  }
+
+  volumeProfile = volumeLevel - (audioDuckingLvl * 5);
+  volumeProfile = clampRange(volumeProfile, 0, 100);
+
+  zoneMode = (projectionState > 0) ? 1 : 0;
+
+  mRse.RsePlaybackState = clampRange(playbackState, 0, 7);
+  mRse.RseSource = clampRange(mediaSource, 0, 7);
+  mRse.RseLinkState = clampRange(linkState, 0, 3);
+  mRse.RseVolumeProfile = volumeProfile;
+  mRse.RseContentType = clampRange(trackType, 0, 15);
+  mRse.RseZoneMode = clampRange(zoneMode, 0, 3);
+  output(mRse);
+
+  if (mRse.RsePlaybackState != gLastPlaybackState ||
+      mRse.RseSource != gLastSource ||
+      mRse.RseLinkState != gLastLinkState ||
+      mRse.RseContentType != gLastContentType)
+  {
+    write("[RSE] playback=%d source=%d link=%d vol=%d content=%d zone=%d",
+          mRse.RsePlaybackState,
+          mRse.RseSource,
+          mRse.RseLinkState,
+          mRse.RseVolumeProfile,
+          mRse.RseContentType,
+          mRse.RseZoneMode);
+    gLastPlaybackState = mRse.RsePlaybackState;
+    gLastSource = mRse.RseSource;
+    gLastLinkState = mRse.RseLinkState;
+    gLastContentType = mRse.RseContentType;
+  }
+}
+
+on start
+{
+  gMediaSource = 0;
+  gMediaState = 0;
+  gMuteState = 0;
+  gVolumeLevel = 20;
+  gAudioFocusOwner = 0;
+  gAudioDuckingLvl = 0;
+  gTrackType = 0;
+  gProjectionType = 0;
+  gProjectionState = 0;
+  gMediaRxMs = 0;
+  gAudioFocusRxMs = 0;
+  gMediaMetaRxMs = 0;
+  gProjectionRxMs = 0;
+  gLastMediaInputStale = 0;
+  gLastAudioFocusInputStale = 0;
+  gLastMediaMetaInputStale = 0;
+  gLastProjectionInputStale = 0;
+  gLastPlaybackState = -1;
+  gLastSource = -1;
+  gLastLinkState = -1;
+  gLastContentType = -1;
+  setTimer(tRseCycle, 100);
+  write("[RSE] start");
+}
+
+on timer tRseCycle
+{
+  publishRseState();
+  setTimer(tRseCycle, 100);
+}
+
+on message frmMediaStateMsg
+{
+  gMediaSource = clampRange((int)this.MediaSource, 0, 7);
+  gMediaState = clampRange((int)this.MediaState, 0, 7);
+  gMuteState = clampRange((int)this.MuteState, 0, 1);
+  gVolumeLevel = clampRange((int)this.VolumeLevel, 0, 100);
+  gMediaRxMs = getSimulationTimeMs();
+}
+
+on message frmAudioFocusMsg
+{
+  gAudioFocusOwner = clampRange((int)this.AudioFocusOwner, 0, 7);
+  gAudioDuckingLvl = clampRange((int)this.AudioDuckingLvl, 0, 7);
+  gAudioFocusRxMs = getSimulationTimeMs();
+}
+
+on message frmMediaMetaMsg
+{
+  gTrackType = clampRange((int)this.MediaTrackType, 0, 15);
+  gMediaMetaRxMs = getSimulationTimeMs();
+}
+
+on message frmPhoneProjectionMsg
+{
+  gProjectionType = clampRange((int)this.ProjectionType, 0, 3);
+  gProjectionState = clampRange((int)this.ProjectionState, 0, 3);
+  gProjectionRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tRseCycle);
+}

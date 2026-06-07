@@ -1,0 +1,301 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tIboxCycle;
+  dword gVehTsMs;
+  dword gNavTsMs;
+  dword gRouteTsMs;
+  int gDriveState;
+  int gVehicleSpeed;
+  int gRoadZone;
+  int gNavDirection;
+  int gZoneDistance;
+  int gSpeedLimit;
+  int gNavEtaMinutes;
+  int gRouteEtaMinutes;
+  int gAlertLevel;
+  int gWarningPathStatus;
+  int gFailSafeMode;
+  int gLastVehInputStale;
+  int gLastNavInputStale;
+  int gLastLinkMode;
+  int gLastRouteState;
+  int gLastServiceFlags;
+  dword gAlertTsMs;
+}
+
+int deriveZoneDistanceFromEtaMinutes(int etaMinutes)
+{
+  if (etaMinutes <= 0)
+  {
+    return 0;
+  }
+  if (etaMinutes <= 1)
+  {
+    return 50;
+  }
+  if (etaMinutes <= 2)
+  {
+    return 80;
+  }
+  if (etaMinutes <= 3)
+  {
+    return 120;
+  }
+  if (etaMinutes <= 5)
+  {
+    return 180;
+  }
+  if (etaMinutes <= 8)
+  {
+    return 240;
+  }
+  if (etaMinutes <= 12)
+  {
+    return 255;
+  }
+  return 255;
+}
+
+void traceIboxInputHealth(int vehInputStale, int navInputStale)
+{
+  if (vehInputStale != gLastVehInputStale)
+  {
+    if (vehInputStale == 1)
+    {
+      write("[IBOX] vehicle input stale");
+    }
+    else
+    {
+      write("[IBOX] vehicle input restored");
+    }
+    gLastVehInputStale = vehInputStale;
+  }
+
+  if (navInputStale != gLastNavInputStale)
+  {
+    if (navInputStale == 1)
+    {
+      write("[IBOX] nav input stale");
+    }
+    else
+    {
+      write("[IBOX] nav input restored");
+    }
+    gLastNavInputStale = navInputStale;
+  }
+}
+
+void publishIboxState()
+{
+  int diagStage;
+  dword nowMs;
+  int vehAgeMs;
+  int navAgeMs;
+  int boundaryAlive;
+  int routeActive;
+  int serviceContext;
+  int vehInputStale;
+  int navInputStale;
+  int vehicleFresh;
+  int navFresh;
+  int vehicleLinkActive;
+  int navLinkActive;
+  int vehicleSpeed;
+  int roadZone;
+  int navDirection;
+  int zoneDistance;
+  int speedLimit;
+  int linkMode;
+  int routeState;
+  int serviceFlags;
+  int failSafeMode;
+  int alertLevel;
+  int signalBars;
+  int etaMinutes;
+
+  nowMs = getSimulationTimeMs();
+  vehAgeMs = (gVehTsMs == 0) ? 60000 : clampRange((int)(nowMs - gVehTsMs), 0, 60000);
+  navAgeMs = (gNavTsMs == 0) ? 60000 : clampRange((int)(nowMs - gNavTsMs), 0, 60000);
+  vehInputStale = (vehAgeMs <= 1000) ? 0 : 1;
+  navInputStale = (navAgeMs <= 1000) ? 0 : 1;
+  traceIboxInputHealth(vehInputStale, navInputStale);
+
+  vehicleFresh = (vehAgeMs <= 300) ? 1 : 0;
+  navFresh = (navAgeMs <= 300) ? 1 : 0;
+  vehicleLinkActive = (vehAgeMs <= 1000) ? 1 : 0;
+  navLinkActive = (navAgeMs <= 1000) ? 1 : 0;
+  vehicleSpeed = vehicleFresh == 1 ? gVehicleSpeed : 0;
+  roadZone = navLinkActive == 1 ? gRoadZone : 0;
+  navDirection = navFresh == 1 ? gNavDirection : 0;
+  etaMinutes = 0;
+  if (ethIsRecentTick(gRouteTsMs, 300) == 1)
+  {
+    etaMinutes = clampRange(gRouteEtaMinutes, 0, 255);
+  }
+  else if (navFresh == 1)
+  {
+    etaMinutes = clampRange(gNavEtaMinutes, 0, 255);
+  }
+  zoneDistance = navFresh == 1 ? deriveZoneDistanceFromEtaMinutes(etaMinutes) : 0;
+  speedLimit = navFresh == 1 ? gSpeedLimit : 0;
+  boundaryAlive = clampRange((int)@CoreState::domainBoundaryStatus, 0, 1);
+  gWarningPathStatus = boundaryAlive == 1 ? clampRange((int)@CoreState::warningPathStatus, 0, 2) : 2;
+  gFailSafeMode = boundaryAlive == 1 ? clampRange((int)@Core::failSafeMode, 0, 2) : 2;
+  failSafeMode = gFailSafeMode;
+  alertLevel = (ethIsRecentTick(gAlertTsMs, 300) == 1) ? gAlertLevel : 0;
+  routeActive = (roadZone > 0) ? 1 : 0;
+  serviceContext = ethHasBoundaryServiceContext(routeActive, alertLevel);
+  diagStage = ethDiagBoundaryStage(routeActive,
+                                   alertLevel,
+                                   boundaryAlive,
+                                   gWarningPathStatus,
+                                   failSafeMode);
+
+  linkMode = 0;
+  if (serviceContext == 1 || vehicleLinkActive == 1 || navLinkActive == 1)
+  {
+    linkMode = 1;
+  }
+  if (diagStage == 1 && vehicleFresh == 1 && navFresh == 1 && routeActive == 1)
+  {
+    linkMode = 2;
+  }
+
+  routeState = 0;
+  if (roadZone > 0 && navLinkActive == 1)
+  {
+    routeState = 1;
+  }
+  if (navDirection > 0 && zoneDistance > 0 && navFresh == 1)
+  {
+    routeState = 2;
+  }
+
+  serviceFlags = 0;
+  if (roadZone > 0)
+  {
+    serviceFlags = serviceFlags | 1;
+  }
+  if (alertLevel > 0)
+  {
+    serviceFlags = serviceFlags | 2;
+  }
+  if (diagStage >= 2)
+  {
+    serviceFlags = serviceFlags | 4;
+  }
+  if (diagStage == 1 &&
+      vehicleFresh == 1 && navFresh == 1 &&
+      vehicleSpeed > speedLimit && speedLimit > 0)
+  {
+    serviceFlags = serviceFlags | 8;
+  }
+
+  signalBars = 0;
+  if (serviceContext == 1 || vehicleLinkActive == 1 || navLinkActive == 1)
+  {
+    signalBars = 1;
+  }
+  if (diagStage == 2 && signalBars < 3)
+  {
+    signalBars = 3;
+  }
+  if (diagStage == 1)
+  {
+    signalBars = 4;
+  }
+
+  if (vehAgeMs > 1000 || navAgeMs > 1000)
+  {
+    signalBars = 1;
+  }
+  else if ((vehAgeMs > 300 || navAgeMs > 300) && signalBars > 3)
+  {
+    signalBars = 3;
+  }
+  if (routeState == 0 && signalBars > 1)
+  {
+    signalBars = signalBars - 1;
+  }
+
+  if (linkMode != gLastLinkMode ||
+      routeState != gLastRouteState ||
+      serviceFlags != gLastServiceFlags)
+  {
+    write("[IBOX] link=%d route=%d bars=%d service=0x%X",
+          linkMode, routeState, signalBars, serviceFlags);
+    gLastLinkMode = linkMode;
+    gLastRouteState = routeState;
+    gLastServiceFlags = serviceFlags;
+  }
+}
+
+on start
+{
+  gVehTsMs = 0;
+  gNavTsMs = 0;
+  gRouteTsMs = 0;
+  gDriveState = 0;
+  gVehicleSpeed = 0;
+  gRoadZone = 0;
+  gNavDirection = 0;
+  gZoneDistance = 0;
+  gSpeedLimit = 0;
+  gNavEtaMinutes = 0;
+  gRouteEtaMinutes = 0;
+  gAlertLevel = 0;
+  gWarningPathStatus = 2;
+  gFailSafeMode = 2;
+  gLastVehInputStale = 1;
+  gLastNavInputStale = 1;
+  gLastLinkMode = -1;
+  gLastRouteState = -1;
+  gLastServiceFlags = -1;
+  gAlertTsMs = 0;
+  setTimer(tIboxCycle, 100);
+  write("[IBOX] start");
+}
+
+on timer tIboxCycle
+{
+  publishIboxState();
+  setTimer(tIboxCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tIboxCycle);
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehTsMs = getSimulationTimeMs();
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+}
+
+on message frmNavModuleStateMsg
+{
+  gNavTsMs = getSimulationTimeMs();
+  gRoadZone = clampRange((int)this.NavRouteClass, 0, 3);
+  gNavDirection = clampRange((int)this.NavGuideType, 0, 3);
+  gNavEtaMinutes = clampRange((int)this.NavEtaMinutes, 0, 255);
+  gSpeedLimit = clampRange((int)this.NavSpeedLimit, 0, 255);
+}
+
+on message frmNavigationRouteMsg
+{
+  gRouteTsMs = getSimulationTimeMs();
+  gRouteEtaMinutes = clampRange((int)this.EtaMinutes, 0, 255);
+}
+
+on message frmAdasDomainStateMsg
+{
+  gAlertLevel = clampRange((int)this.SelectedAlertLevel, 0, 7);
+  gAlertTsMs = getSimulationTimeMs();
+}

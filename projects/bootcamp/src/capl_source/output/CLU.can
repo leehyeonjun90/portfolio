@@ -1,0 +1,500 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tDuplicateGuard;
+  int gLastDisplayedCode;
+  dword gLastDisplayMs;
+  int gBaseClusterSpeed;
+  int gBaseClusterGear;
+  int gBaseClusterStatus;
+  int gLastBaseSyncState;
+  int gLastBaseSyncError;
+  int gThemeMode;
+  int gPopupType;
+  int gPopupPriority;
+  int gPopupActive;
+  int gVolumeLevel;
+  int gAudioFocusOwner;
+  int gAudioDuckingLvl;
+  int gTtsState;
+  int gNotifType;
+  int gNotifArg;
+  int gClusterSyncState;
+  int gClusterSyncSeq;
+  int gHistoryCodes[16];
+  int gHistorySnaps[16];
+  int gHistoryWriteIdx;
+  int gHistoryCount;
+  int gBackboneAlertLevel;
+  int gBackboneAlertType;
+  int gBackboneTimeoutClear;
+  dword gBackboneAlertTsMs;
+}
+
+int useBackboneAlertState()
+{
+  dword nowMs;
+
+  if (gBackboneAlertTsMs == 0)
+  {
+    return 0;
+  }
+
+  nowMs = getSimulationTimeMs();
+  if ((nowMs - gBackboneAlertTsMs) > 1500)
+  {
+    return 0;
+  }
+
+  return 1;
+}
+
+int useEffectiveAlertState()
+{
+  int effectiveAlertLevel;
+  int effectiveAlertType;
+  int selectedAlertGateReason;
+  int timeoutClear;
+
+  effectiveAlertLevel = clampRange((int)@CoreState::selectedAlertEffectiveLevel, 0, 7);
+  effectiveAlertType = clampRange((int)@CoreState::selectedAlertEffectiveType, 0, 15);
+  selectedAlertGateReason = clampRange((int)@CoreState::selectedAlertGateReason, 0, 7);
+  timeoutClear = (((int)@Core::timeoutClear) == 1) ? 1 : 0;
+
+  if (effectiveAlertLevel > 0 ||
+      effectiveAlertType > 0 ||
+      selectedAlertGateReason > 0 ||
+      timeoutClear == 1)
+  {
+    return 1;
+  }
+
+  return 0;
+}
+
+int useDecisionAlertState()
+{
+  int decisionAlertLevel;
+  int decisionAlertType;
+  int selectedAlertGateReason;
+  int timeoutClear;
+
+  decisionAlertLevel = clampRange((int)@CoreState::selectedAlertDecisionLevel, 0, 7);
+  decisionAlertType = clampRange((int)@CoreState::selectedAlertDecisionType, 0, 15);
+  selectedAlertGateReason = clampRange((int)@CoreState::selectedAlertGateReason, 0, 7);
+  timeoutClear = (((int)@Core::timeoutClear) == 1) ? 1 : 0;
+
+  if ((decisionAlertLevel > 0 || decisionAlertType > 0) &&
+      selectedAlertGateReason == 0 &&
+      timeoutClear == 0)
+  {
+    return 1;
+  }
+
+  return 0;
+}
+
+void updateBackboneAlertState(int alertLevel, int alertType, int timeoutClear)
+{
+  gBackboneAlertLevel = clampRange(alertLevel, 0, 7);
+  gBackboneAlertType = clampRange(alertType, 0, 15);
+  gBackboneTimeoutClear = (timeoutClear == 1) ? 1 : 0;
+  gBackboneAlertTsMs = getSimulationTimeMs();
+}
+
+
+int applyDisplayPolicy(int code)
+{
+  if (code <= 0)
+  {
+    return 0;
+  }
+  return clampRange(code, 0, 255);
+}
+
+int applyRobustPolicy(int code)
+{
+  int selectedAlertLevel;
+  int timeoutClear;
+  int coded;
+  int syncMismatch;
+  int useBackbone;
+  int useDecision;
+  int useEffective;
+
+  coded = code;
+  useEffective = useEffectiveAlertState();
+  useDecision = useDecisionAlertState();
+  useBackbone = useBackboneAlertState();
+  if (useEffective == 1)
+  {
+    selectedAlertLevel = clampRange((int)@CoreState::selectedAlertEffectiveLevel, 0, 7);
+    timeoutClear = (((int)@Core::timeoutClear) == 1) ? 1 : 0;
+    updateBackboneAlertState(selectedAlertLevel,
+                             clampRange((int)@CoreState::selectedAlertEffectiveType, 0, 15),
+                             timeoutClear);
+  }
+  else if (useDecision == 1)
+  {
+    selectedAlertLevel = clampRange((int)@CoreState::selectedAlertDecisionLevel, 0, 7);
+    timeoutClear = 0;
+    updateBackboneAlertState(selectedAlertLevel,
+                             clampRange((int)@CoreState::selectedAlertDecisionType, 0, 15),
+                             0);
+  }
+  else if (useBackbone == 1)
+  {
+    selectedAlertLevel = clampRange(gBackboneAlertLevel, 0, 7);
+    timeoutClear = (gBackboneTimeoutClear == 1) ? 1 : 0;
+  }
+  else
+  {
+    selectedAlertLevel = clampRange(gBaseClusterStatus, 0, 7);
+    timeoutClear = 0;
+  }
+
+  syncMismatch = 0;
+  if (gClusterSyncState == 0 || gClusterSyncSeq > 50)
+  {
+    syncMismatch = 1;
+  }
+  if (coded == 0 &&
+      timeoutClear == 0 &&
+      selectedAlertLevel > 0 &&
+      gLastDisplayedCode > 0)
+  {
+    coded = gLastDisplayedCode;
+    syncMismatch = 1;
+  }
+
+  if (syncMismatch == 1)
+  {
+    @CoreState::clusterNotifPrio = clampRange((int)@CoreState::clusterNotifPrio, 0, 255);
+    if ((int)@CoreState::clusterNotifPrio < 6)
+    {
+      @CoreState::clusterNotifPrio = 6;
+    }
+  }
+
+  return coded;
+}
+
+void pushHistory(int code)
+{
+  int snap;
+
+  if (code <= 0)
+  {
+    return;
+  }
+
+  snap = clampRange((int)@CoreState::arbitrationSnapshotId, 0, 65535);
+  gHistoryCodes[gHistoryWriteIdx] = code;
+  gHistorySnaps[gHistoryWriteIdx] = snap;
+  gHistoryWriteIdx = (gHistoryWriteIdx + 1) & 15;
+  if (gHistoryCount < 16)
+  {
+    gHistoryCount = gHistoryCount + 1;
+  }
+
+  @CoreState::alertHistoryCount = ((int)@CoreState::alertHistoryCount + 1) & 0xFFFF;
+}
+
+void respondHistoryQuery()
+{
+  int queryOffset;
+  int idx;
+  int pos;
+  int response;
+
+  queryOffset = clampRange((int)@Test::historyQueryOffset, 0, 15);
+  response = 0;
+
+  if (gHistoryCount > 0)
+  {
+    idx = queryOffset;
+    if (idx >= gHistoryCount)
+    {
+      idx = gHistoryCount - 1;
+    }
+    pos = gHistoryWriteIdx - 1 - idx;
+    if (pos < 0)
+    {
+      pos = pos + 16;
+    }
+    response = gHistoryCodes[pos];
+  }
+
+  @Test::historyQueryCode = response;
+}
+
+void publishCompatSteeringFrame()
+{
+  int angle;
+  int frame;
+  int manualMode;
+
+  manualMode = (((int)@Test::scenarioActiveId) == 0) ? 1 : 0;
+
+  if (manualMode == 1)
+  {
+    angle = clampRange(
+      (int)((((long)clampRange((int)@Cmd::steeringAngleCmd, -540, 540)) + 540) * 138 / 1080),
+      0,
+      138
+    );
+  }
+  else
+  {
+    angle = clampRange((int)@Chassis::steeringAngle, 0, 138);
+  }
+  frame = (angle * 69 + 69) / 138;
+
+  @Display::steeringFrame = clampRange(frame, 0, 69);
+}
+
+on start
+{
+  int i;
+
+  gLastDisplayedCode = 0;
+  gLastDisplayMs = 0;
+  gBaseClusterSpeed = 0;
+  gBaseClusterGear = 0;
+  gBaseClusterStatus = 0;
+  gLastBaseSyncState = -1;
+  gLastBaseSyncError = -1;
+  gThemeMode = 0;
+  gPopupType = 0;
+  gPopupPriority = 0;
+  gPopupActive = 0;
+  gVolumeLevel = 30;
+  gAudioFocusOwner = 0;
+  gAudioDuckingLvl = 0;
+  gTtsState = 0;
+  gNotifType = 0;
+  gNotifArg = 0;
+  gClusterSyncState = 1;
+  gClusterSyncSeq = 0;
+  gHistoryWriteIdx = 0;
+  gHistoryCount = 0;
+  gBackboneAlertLevel = 0;
+  gBackboneAlertType = 0;
+  gBackboneTimeoutClear = 0;
+  gBackboneAlertTsMs = 0;
+  for (i = 0; i < 16; i = i + 1)
+  {
+    gHistoryCodes[i] = 0;
+    gHistorySnaps[i] = 0;
+  }
+  @CoreState::duplicatePopupGuard = 0;
+  @CoreState::themeMode = 0;
+  @CoreState::popupType = 0;
+  @CoreState::popupPriority = 0;
+  @CoreState::popupActive = 0;
+  @CoreState::volumeLevel = 30;
+  @CoreState::audioFocusOwner = 0;
+  @CoreState::audioDuckingLvl = 0;
+  @CoreState::ttsState = 0;
+  @CoreState::clusterNotifType = 0;
+  @CoreState::clusterNotifPrio = 0;
+  @CoreState::clusterSyncState = 1;
+  @CoreState::clusterSyncSeq = 0;
+  @CoreState::alertHistoryCount = 0;
+  @Test::historyQueryCode = 0;
+  /* `Chassis::steeringAngle` is a donor panel/manual command seam.
+     CLU must not clobber it during startup; only derived display state belongs here. */
+  @Display::steeringFrame = 35;
+  write("[CLU] start");
+}
+
+on message frmClusterBaseStateMsg
+{
+  gBaseClusterSpeed = clampRange((int)this.ClusterSpeed, 0, 255);
+  gBaseClusterGear = clampRange((int)this.ClusterGear, 0, 15);
+  gBaseClusterStatus = clampRange((int)this.ClusterStatus, 0, 15);
+}
+
+on message frmAdasDomainStateMsg
+{
+  updateBackboneAlertState((int)this.SelectedAlertLevel,
+                           (int)this.SelectedAlertType,
+                           (int)this.TimeoutClear);
+}
+
+on message frmClusterThemeMsg
+{
+  gThemeMode = clampRange((int)this.ThemeMode, 0, 7);
+  @CoreState::themeMode = gThemeMode;
+}
+
+on message frmHmiPopupStateMsg
+{
+  gPopupType = clampRange((int)this.PopupType, 0, 15);
+  gPopupPriority = clampRange((int)this.PopupPriority, 0, 7);
+  gPopupActive = clampRange((int)this.PopupActive, 0, 1);
+  @CoreState::popupType = gPopupType;
+  @CoreState::popupPriority = gPopupPriority;
+  @CoreState::popupActive = gPopupActive;
+}
+
+on message frmMediaStateMsg
+{
+  gVolumeLevel = clampRange((int)this.VolumeLevel, 0, 100);
+  @CoreState::volumeLevel = gVolumeLevel;
+}
+
+on message frmAudioFocusMsg
+{
+  gAudioFocusOwner = clampRange((int)this.AudioFocusOwner, 0, 7);
+  gAudioDuckingLvl = clampRange((int)this.AudioDuckingLvl, 0, 7);
+  @CoreState::audioFocusOwner = gAudioFocusOwner;
+  @CoreState::audioDuckingLvl = gAudioDuckingLvl;
+}
+
+on message frmSpeechTtsStateMsg
+{
+  gTtsState = clampRange((int)this.TtsState, 0, 7);
+  @CoreState::ttsState = gTtsState;
+}
+
+on message frmClusterSyncStateMsg
+{
+  gClusterSyncState = clampRange((int)this.ClusterSyncState, 0, 15);
+  gClusterSyncSeq = clampRange((int)this.ClusterSyncAge, 0, 255);
+  @CoreState::clusterSyncState = gClusterSyncState;
+  @CoreState::clusterSyncSeq = gClusterSyncSeq;
+  if (gClusterSyncState != gLastBaseSyncState ||
+      (int)this.ClusterSyncError != gLastBaseSyncError)
+  {
+    write("[CLU] base sync state=%d err=%d age=%d spd=%d gear=%d status=%d",
+          gClusterSyncState, (int)this.ClusterSyncError, gClusterSyncSeq,
+          gBaseClusterSpeed, gBaseClusterGear, gBaseClusterStatus);
+    gLastBaseSyncState = gClusterSyncState;
+    gLastBaseSyncError = (int)this.ClusterSyncError;
+  }
+}
+
+on sysvar Chassis::steeringAngle
+{
+  publishCompatSteeringFrame();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tDuplicateGuard);
+}
+
+on message frmClusterNotifMsg
+{
+  gNotifType = clampRange((int)this.ClusterNotifType, 0, 255);
+  gNotifArg = clampRange((int)this.ClusterNotifArg, 0, 255);
+  @CoreState::clusterNotifType = gNotifType;
+  @CoreState::clusterNotifPrio = gNotifArg;
+}
+
+on message frmClusterWarningMsg
+{
+  int code;
+  int rawCode;
+  int prevCode;
+  int guardRemainMs;
+  dword nowMs;
+  dword elapsedMs;
+
+  prevCode = gLastDisplayedCode;
+  rawCode = clampRange((int)this.WarningTextCode, 0, 255);
+  code = applyDisplayPolicy(rawCode);
+  code = applyRobustPolicy(code);
+  nowMs = getSimulationTimeMs();
+  guardRemainMs = 0;
+
+  if (code == 0)
+  {
+    cancelTimer(tDuplicateGuard);
+    gLastDisplayedCode = 0;
+    gLastDisplayMs = 0;
+    @CoreState::duplicatePopupGuard = 0;
+    @Cluster::warningTextCode = 0;
+  }
+  else
+  {
+    if (code == gLastDisplayedCode)
+    {
+      elapsedMs = nowMs - gLastDisplayMs;
+      if (elapsedMs < 1000)
+      {
+        guardRemainMs = 1000 - (int)elapsedMs;
+      }
+      else
+      {
+        gLastDisplayMs = nowMs;
+        guardRemainMs = 1000;
+      }
+    }
+    else
+    {
+      gLastDisplayedCode = code;
+      gLastDisplayMs = nowMs;
+      guardRemainMs = 1000;
+    }
+
+    @Cluster::warningTextCode = code;
+    @CoreState::duplicatePopupGuard = guardRemainMs;
+    if (guardRemainMs > 0)
+    {
+      setTimer(tDuplicateGuard, 100);
+    }
+
+    if (code != prevCode)
+    {
+      pushHistory(code);
+      respondHistoryQuery();
+    }
+
+    write("[CLU] warning code=%d raw=%d focus=%d duck=%d tts=%d popup=%d/%d sync=%d age=%d",
+          code, rawCode, gAudioFocusOwner, gAudioDuckingLvl, gTtsState,
+          gPopupPriority, gPopupActive, gClusterSyncState, gClusterSyncSeq);
+  }
+}
+
+on sysvar Test::historyQueryOffset
+{
+  respondHistoryQuery();
+  write("[CLU] history query offset=%d code=%d",
+        (int)@Test::historyQueryOffset, (int)@Test::historyQueryCode);
+}
+
+on timer tDuplicateGuard
+{
+  int guardRemainMs;
+  dword nowMs;
+  dword elapsedMs;
+
+  if (gLastDisplayedCode == 0)
+  {
+    @CoreState::duplicatePopupGuard = 0;
+    return;
+  }
+
+  nowMs = getSimulationTimeMs();
+  elapsedMs = nowMs - gLastDisplayMs;
+  if (elapsedMs >= 1000)
+  {
+    guardRemainMs = 0;
+  }
+  else
+  {
+    guardRemainMs = 1000 - (int)elapsedMs;
+  }
+
+  @CoreState::duplicatePopupGuard = guardRemainMs;
+  if (guardRemainMs > 0)
+  {
+    setTimer(tDuplicateGuard, 100);
+  }
+}

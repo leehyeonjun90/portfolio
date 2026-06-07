@@ -1,0 +1,108 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tAirSuspensionCycle;
+  int gSuspensionMode;
+  int gSuspensionLevel;
+  int gDampingLevel;
+  dword gSuspensionRxMs;
+  int gLastMode;
+  int gLastFrontHeight;
+  int gLastRearHeight;
+  int gLastInputStale;
+}
+
+on start
+{
+  gSuspensionMode = 0;
+  gSuspensionLevel = 8;
+  gDampingLevel = 12;
+  gSuspensionRxMs = 0;
+  gLastMode = -1;
+  gLastFrontHeight = -1;
+  gLastRearHeight = -1;
+  gLastInputStale = 1;
+  setTimer(tAirSuspensionCycle, 100);
+  write("[ASM] start");
+}
+
+on message frmSuspensionStateMsg
+{
+  gSuspensionMode = clampRange((int)this.SuspensionMode, 0, 7);
+  gSuspensionLevel = clampRange((int)this.SuspensionLevel, 0, 31);
+  gDampingLevel = clampRange((int)this.DampingLevel, 0, 255);
+  gSuspensionRxMs = getSimulationTimeMs();
+}
+
+on timer tAirSuspensionCycle
+{
+  message frmAirSuspensionStateMsg mAir;
+  int inputStale;
+  int suspensionMode;
+  int suspensionLevel;
+  int dampingLevel;
+  int frontHeight;
+  int rearHeight;
+
+  inputStale = 1;
+  if (gSuspensionRxMs != 0 &&
+      (getSimulationTimeMs() - gSuspensionRxMs) <= 300)
+  {
+    inputStale = 0;
+  }
+
+  suspensionMode = gSuspensionMode;
+  suspensionLevel = gSuspensionLevel;
+  dampingLevel = gDampingLevel;
+  if (inputStale == 1)
+  {
+    suspensionMode = 0;
+    suspensionLevel = 8;
+    dampingLevel = 12;
+  }
+
+  if (inputStale != gLastInputStale)
+  {
+    if (inputStale == 1)
+    {
+      write("[ASM] suspension input stale");
+    }
+    else
+    {
+      write("[ASM] suspension input restored");
+    }
+    gLastInputStale = inputStale;
+  }
+
+  frontHeight = 110 + suspensionLevel;
+  rearHeight = 108 + suspensionLevel + ((dampingLevel > 20) ? 2 : 0);
+
+  mAir.RideHeightMode = clampRange(suspensionMode, 0, 7);
+  mAir.FrontHeight = clampRange(frontHeight, 0, 255);
+  mAir.RearHeight = clampRange(rearHeight, 0, 255);
+  output(mAir);
+
+  if (mAir.RideHeightMode != gLastMode ||
+      mAir.FrontHeight != gLastFrontHeight ||
+      mAir.RearHeight != gLastRearHeight)
+  {
+    write("[ASM] mode=%d front=%d rear=%d",
+          mAir.RideHeightMode,
+          mAir.FrontHeight,
+          mAir.RearHeight);
+    gLastMode = mAir.RideHeightMode;
+    gLastFrontHeight = mAir.FrontHeight;
+    gLastRearHeight = mAir.RearHeight;
+  }
+
+  setTimer(tAirSuspensionCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tAirSuspensionCycle);
+}

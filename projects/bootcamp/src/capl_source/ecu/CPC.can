@@ -1,0 +1,241 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tChargePortCycle;
+  int gObcState;
+  int gAcPlugState;
+  int gBmsState;
+  int gPackSoc;
+  int gPackTemp;
+  int gDriveState;
+  dword gObcRxMs;
+  dword gBmsRxMs;
+  dword gVehicleRxMs;
+  int gLastObcInputStale;
+  int gLastBmsInputStale;
+  int gLastVehicleInputStale;
+  int gLastPortLockState;
+  int gLastPlugState;
+  int gLastChargeEnable;
+  int gLastThermalState;
+  int gLastChargeTargetSoc;
+}
+
+void traceCpcInputHealth(int obcInputStale, int bmsInputStale, int vehicleInputStale)
+{
+  if (obcInputStale != gLastObcInputStale)
+  {
+    if (obcInputStale == 1)
+    {
+      write("[CPC] obc input stale");
+    }
+    else
+    {
+      write("[CPC] obc input restored");
+    }
+    gLastObcInputStale = obcInputStale;
+  }
+
+  if (bmsInputStale != gLastBmsInputStale)
+  {
+    if (bmsInputStale == 1)
+    {
+      write("[CPC] bms input stale");
+    }
+    else
+    {
+      write("[CPC] bms input restored");
+    }
+    gLastBmsInputStale = bmsInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[CPC] vehicle input stale");
+    }
+    else
+    {
+      write("[CPC] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+void publishChargePortState()
+{
+  message frmChargePortCtrlStateMsg mPort;
+  int obcInputStale;
+  int bmsInputStale;
+  int vehicleInputStale;
+  int driveState;
+  int obcState;
+  int acPlugState;
+  int bmsState;
+  int packSoc;
+  int packTemp;
+  int portLockState;
+  int plugState;
+  int chargeEnable;
+  int thermalState;
+  int chargeTargetSoc;
+
+  obcInputStale = (ethIsRecentTick(gObcRxMs, 300) == 1) ? 0 : 1;
+  bmsInputStale = (ethIsRecentTick(gBmsRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  traceCpcInputHealth(obcInputStale, bmsInputStale, vehicleInputStale);
+
+  obcState = gObcState;
+  acPlugState = gAcPlugState;
+  bmsState = gBmsState;
+  packSoc = gPackSoc;
+  packTemp = gPackTemp;
+  driveState = gDriveState;
+  if (obcInputStale == 1)
+  {
+    obcState = 0;
+    acPlugState = 0;
+  }
+  if (bmsInputStale == 1)
+  {
+    bmsState = 7;
+    packSoc = 50;
+    packTemp = 28;
+  }
+  if (vehicleInputStale == 1)
+  {
+    driveState = 3;
+  }
+
+  plugState = clampRange(acPlugState, 0, 1);
+  chargeEnable = (obcState == 2 && bmsState <= 2 && driveState == 0) ? 1 : 0;
+
+  if (plugState == 0)
+  {
+    portLockState = 0;
+  }
+  else if (chargeEnable == 1)
+  {
+    portLockState = 2;
+  }
+  else
+  {
+    portLockState = 1;
+  }
+
+  if (packTemp >= 45)
+  {
+    thermalState = 2;
+  }
+  else if (packTemp >= 35)
+  {
+    thermalState = 1;
+  }
+  else
+  {
+    thermalState = 0;
+  }
+
+  chargeTargetSoc = 100;
+  if (thermalState == 2)
+  {
+    chargeTargetSoc = 80;
+  }
+  else if (packSoc >= 90)
+  {
+    chargeTargetSoc = 90;
+  }
+  if (bmsState >= 3)
+  {
+    chargeTargetSoc = 70;
+  }
+
+  mPort.PortLockState = clampRange(portLockState, 0, 3);
+  mPort.PlugState = plugState;
+  mPort.ChargeEnable = chargeEnable;
+  mPort.ThermalState = clampRange(thermalState, 0, 3);
+  mPort.ChargeTargetSoc = clampRange(chargeTargetSoc, 0, 100);
+  output(mPort);
+
+  if (portLockState != gLastPortLockState ||
+      plugState != gLastPlugState ||
+      chargeEnable != gLastChargeEnable ||
+      thermalState != gLastThermalState ||
+      chargeTargetSoc != gLastChargeTargetSoc)
+  {
+    write("[CPC] lock=%d plug=%d enable=%d thermal=%d targetSoc=%d soc=%d temp=%d obc=%d",
+          portLockState,
+          plugState,
+          chargeEnable,
+          thermalState,
+          chargeTargetSoc,
+          packSoc,
+          packTemp,
+          obcState);
+    gLastPortLockState = portLockState;
+    gLastPlugState = plugState;
+    gLastChargeEnable = chargeEnable;
+    gLastThermalState = thermalState;
+    gLastChargeTargetSoc = chargeTargetSoc;
+  }
+}
+
+on start
+{
+  gObcState = 0;
+  gAcPlugState = 0;
+  gBmsState = 0;
+  gPackSoc = 95;
+  gPackTemp = 28;
+  gDriveState = 0;
+  gObcRxMs = 0;
+  gBmsRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastObcInputStale = 0;
+  gLastBmsInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastPortLockState = -1;
+  gLastPlugState = -1;
+  gLastChargeEnable = -1;
+  gLastThermalState = -1;
+  gLastChargeTargetSoc = -1;
+  setTimer(tChargePortCycle, 100);
+  write("[CPC] start");
+}
+
+on timer tChargePortCycle
+{
+  publishChargePortState();
+  setTimer(tChargePortCycle, 100);
+}
+
+on message frmObcStateMsg
+{
+  gObcState = clampRange((int)this.ObcState, 0, 7);
+  gAcPlugState = clampRange((int)this.AcPlugState, 0, 1);
+  gObcRxMs = getSimulationTimeMs();
+}
+
+on message frmBatBmsStateMsg
+{
+  gBmsState = clampRange((int)this.BmsState, 0, 7);
+  gPackSoc = clampRange((int)this.PackSoc, 0, 100);
+  gPackTemp = clampRange((int)this.PackTemp, 0, 255);
+  gBmsRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tChargePortCycle);
+}

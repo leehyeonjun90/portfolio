@@ -1,0 +1,261 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tLcaCycle;
+  int gLaneChangeBlock;
+  int gRearRiskLevel;
+  int gMergeConflict;
+  int gTurnLampState;
+  int gVehicleSpeed;
+  dword gRearRadarRxMs;
+  dword gVehicleRxMs;
+  int gWarningPathStatus;
+  int gE2eHealthState;
+  int gFailSafeMode;
+  dword gFailSafeRxMs;
+  int gLastRearRadarInputStale;
+  int gLastVehicleInputStale;
+  int gLastReady;
+  int gLastWarn;
+  int gLastDirection;
+  int gLastMergeConflict;
+  int gLastAlertLevel;
+  int gLastPathReady;
+}
+
+int lcaPathReady()
+{
+  if (ethIsRecentTick(gFailSafeRxMs, 300) == 0)
+  {
+    return 0;
+  }
+  if (gWarningPathStatus >= 2 || gE2eHealthState == 0 || gFailSafeMode >= 2)
+  {
+    return 0;
+  }
+  return 1;
+}
+
+int deriveLcaRiskClass(int rearRiskLevel)
+{
+  if (rearRiskLevel >= 75)
+  {
+    return 4;
+  }
+  if (rearRiskLevel >= 65)
+  {
+    return 3;
+  }
+  if (rearRiskLevel >= 55)
+  {
+    return 2;
+  }
+  if (rearRiskLevel >= 45)
+  {
+    return 1;
+  }
+  return 0;
+}
+
+int deriveLcaAlertLevel(int warn, int objectRiskClass)
+{
+  if (warn == 1 && objectRiskClass >= 4)
+  {
+    return 4;
+  }
+  if (warn == 1)
+  {
+    return 3;
+  }
+  return 0;
+}
+
+void traceLcaInputHealth(int rearRadarInputStale, int vehicleInputStale)
+{
+  if (rearRadarInputStale != gLastRearRadarInputStale)
+  {
+    if (rearRadarInputStale == 1)
+    {
+      write("[LCA] rear-radar input stale");
+    }
+    else
+    {
+      write("[LCA] rear-radar input restored");
+    }
+    gLastRearRadarInputStale = rearRadarInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[LCA] vehicle input stale");
+    }
+    else
+    {
+      write("[LCA] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+void publishLcaState()
+{
+  message frmLcaStateMsg mLca;
+  int rearRadarInputStale;
+  int vehicleInputStale;
+  int rearRiskLevel;
+  int mergeConflict;
+  int vehicleSpeed;
+  int objectRiskClass;
+  int alertLevel;
+  int ready;
+  int warn;
+  int direction;
+  int pathReady;
+  int laneChangeBlock;
+
+  rearRadarInputStale = (ethIsRecentTick(gRearRadarRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  traceLcaInputHealth(rearRadarInputStale, vehicleInputStale);
+
+  rearRiskLevel = gRearRiskLevel;
+  mergeConflict = gMergeConflict;
+  direction = gTurnLampState;
+  vehicleSpeed = gVehicleSpeed;
+  laneChangeBlock = gLaneChangeBlock;
+  if (rearRadarInputStale == 1)
+  {
+    rearRiskLevel = 0;
+    mergeConflict = 0;
+    direction = 0;
+    laneChangeBlock = 0;
+  }
+  if (vehicleInputStale == 1)
+  {
+    vehicleSpeed = 0;
+  }
+
+  pathReady = lcaPathReady();
+  objectRiskClass = deriveLcaRiskClass(rearRiskLevel);
+  ready = 0;
+  warn = 0;
+
+  if ((direction == 1 || direction == 2) &&
+      vehicleSpeed >= 20 &&
+      mergeConflict == 0 &&
+      laneChangeBlock == 0 &&
+      objectRiskClass <= 1)
+  {
+    ready = 1;
+  }
+  if ((direction == 1 || direction == 2) &&
+      (mergeConflict == 1 || laneChangeBlock == 1) &&
+      objectRiskClass >= 2)
+  {
+    warn = 1;
+  }
+  alertLevel = deriveLcaAlertLevel(warn, objectRiskClass);
+  if (pathReady == 0)
+  {
+    ready = 0;
+    warn = 0;
+    direction = 0;
+    mergeConflict = 0;
+    alertLevel = 0;
+  }
+
+  mLca.LcaReady = ready;
+  mLca.LcaWarn = warn;
+  mLca.LcaDirection = clampRange(direction, 0, 3);
+  mLca.MergeConflict = mergeConflict;
+  mLca.SelectedAlertLevel = alertLevel;
+  output(mLca);
+
+  if (pathReady != gLastPathReady ||
+      ready != gLastReady ||
+      warn != gLastWarn ||
+      direction != gLastDirection ||
+      mergeConflict != gLastMergeConflict ||
+      alertLevel != gLastAlertLevel)
+  {
+    write("[LCA] path=%d ready=%d warn=%d dir=%d merge=%d alert=%d speed=%d rearRisk=%d",
+          pathReady,
+          ready,
+          warn,
+          direction,
+          mergeConflict,
+          alertLevel,
+          vehicleSpeed,
+          rearRiskLevel);
+    gLastPathReady = pathReady;
+    gLastReady = ready;
+    gLastWarn = warn;
+    gLastDirection = direction;
+    gLastMergeConflict = mergeConflict;
+    gLastAlertLevel = alertLevel;
+  }
+}
+
+on start
+{
+  gLaneChangeBlock = 0;
+  gRearRiskLevel = 0;
+  gMergeConflict = 0;
+  gTurnLampState = 0;
+  gVehicleSpeed = 0;
+  gRearRadarRxMs = 0;
+  gVehicleRxMs = 0;
+  gWarningPathStatus = 1;
+  gE2eHealthState = 1;
+  gFailSafeMode = 1;
+  gFailSafeRxMs = 0;
+  gLastRearRadarInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastPathReady = -1;
+  gLastReady = -1;
+  gLastWarn = -1;
+  gLastDirection = -1;
+  gLastMergeConflict = -1;
+  gLastAlertLevel = -1;
+  setTimer(tLcaCycle, 100);
+  write("[LCA] start");
+}
+
+on timer tLcaCycle
+{
+  publishLcaState();
+  setTimer(tLcaCycle, 100);
+}
+
+on message frmRearRadarMasterStateMsg
+{
+  gLaneChangeBlock = clampRange((int)this.LaneChangeBlock, 0, 1);
+  gRearRiskLevel = clampRange((int)this.RearRiskLevel, 0, 100);
+  gMergeConflict = clampRange((int)this.MergeConflict, 0, 1);
+  gTurnLampState = clampRange((int)this.TurnLampState, 0, 3);
+  gRearRadarRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on message frmAdasDomainStateMsg
+{
+  gWarningPathStatus = clampRange((int)this.WarningPathStatus, 0, 2);
+  gE2eHealthState = clampRange((int)this.E2eHealthState, 0, 2);
+  gFailSafeMode = clampRange((int)this.FailSafeMode, 0, 2);
+  gFailSafeRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tLcaCycle);
+}

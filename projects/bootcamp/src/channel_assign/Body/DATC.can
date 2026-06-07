@@ -1,0 +1,219 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tDatcCycle;
+  int gRemoteClimateReq;
+  int gTmuLinkState;
+  int gTmuServiceMode;
+  int gSignalBars;
+  int gCabinTemp;
+  dword gTmuServiceRxMs;
+  dword gCabinAirRxMs;
+  int gLastTmuInputStale;
+  int gLastCabinAirInputStale;
+  int gLastCabinSetTemp;
+  int gLastBlowerLevel;
+  int gLastAcOn;
+  int gLastVentMode;
+  int gLastDefogMode;
+}
+
+void traceDatcInputHealth(int tmuInputStale, int cabinAirInputStale)
+{
+  if (tmuInputStale != gLastTmuInputStale)
+  {
+    if (tmuInputStale == 1)
+    {
+      write("[DATC] tmu input stale");
+    }
+    else
+    {
+      write("[DATC] tmu input restored");
+    }
+    gLastTmuInputStale = tmuInputStale;
+  }
+
+  if (cabinAirInputStale != gLastCabinAirInputStale)
+  {
+    if (cabinAirInputStale == 1)
+    {
+      write("[DATC] cabin-air input stale");
+    }
+    else
+    {
+      write("[DATC] cabin-air input restored");
+    }
+    gLastCabinAirInputStale = cabinAirInputStale;
+  }
+}
+
+void publishDatcState()
+{
+  message frmHvacStateMsg mHvacState;
+  message frmHvacActuatorMsg mHvacAct;
+  int tmuInputStale;
+  int cabinAirInputStale;
+  int remoteClimateReq;
+  int tmuLinkState;
+  int tmuServiceMode;
+  int signalBars;
+  int cabinTemp;
+  int cabinSetTemp;
+  int blowerLevel;
+  int acOn;
+  int ventMode;
+  int defogMode;
+  int fanRpmStep;
+
+  tmuInputStale = (ethIsRecentTick(gTmuServiceRxMs, 300) == 1) ? 0 : 1;
+  cabinAirInputStale = (ethIsRecentTick(gCabinAirRxMs, 300) == 1) ? 0 : 1;
+  traceDatcInputHealth(tmuInputStale, cabinAirInputStale);
+
+  remoteClimateReq = gRemoteClimateReq;
+  tmuLinkState = gTmuLinkState;
+  tmuServiceMode = gTmuServiceMode;
+  signalBars = gSignalBars;
+  cabinTemp = gCabinTemp;
+  if (tmuInputStale == 1)
+  {
+    remoteClimateReq = 0;
+    tmuLinkState = 0;
+    tmuServiceMode = 0;
+    signalBars = 0;
+  }
+  if (cabinAirInputStale == 1)
+  {
+    cabinTemp = 24;
+  }
+
+  cabinSetTemp = 22;
+  blowerLevel = 2;
+  acOn = 0;
+  ventMode = 1;
+  defogMode = 0;
+  fanRpmStep = 35;
+
+  if (remoteClimateReq == 1 &&
+      tmuServiceMode == 1 &&
+      tmuLinkState > 0 &&
+      signalBars >= 2)
+  {
+    cabinSetTemp = 24;
+    blowerLevel = 5;
+    acOn = 1;
+    ventMode = 2;
+    fanRpmStep = 80;
+  }
+  else if (cabinTemp >= 28)
+  {
+    cabinSetTemp = 21;
+    blowerLevel = 4;
+    acOn = 1;
+    ventMode = 2;
+    fanRpmStep = 65;
+  }
+  else if (cabinTemp <= 8)
+  {
+    cabinSetTemp = 25;
+    blowerLevel = 4;
+    acOn = 0;
+    ventMode = 1;
+    defogMode = 1;
+    fanRpmStep = 55;
+  }
+  else if (cabinTemp <= 14)
+  {
+    cabinSetTemp = 24;
+    blowerLevel = 3;
+    acOn = 0;
+    ventMode = 1;
+    fanRpmStep = 45;
+  }
+
+  mHvacState.CabinSetTemp = cabinSetTemp;
+  mHvacState.BlowerLevel = blowerLevel;
+  mHvacState.AcCompressorOn = acOn;
+  output(mHvacState);
+
+  mHvacAct.VentMode = ventMode;
+  mHvacAct.RecircMode = (acOn == 1) ? 1 : 0;
+  mHvacAct.DefogMode = defogMode;
+  mHvacAct.FanRpmStep = fanRpmStep;
+  output(mHvacAct);
+
+  if (cabinSetTemp != gLastCabinSetTemp ||
+      blowerLevel != gLastBlowerLevel ||
+      acOn != gLastAcOn ||
+      ventMode != gLastVentMode ||
+      defogMode != gLastDefogMode)
+  {
+    write("[DATC] set=%d blower=%d ac=%d vent=%d defog=%d remote=%d link=%d service=%d bars=%d cabin=%d",
+          cabinSetTemp,
+          blowerLevel,
+          acOn,
+          ventMode,
+          defogMode,
+          remoteClimateReq,
+          tmuLinkState,
+          tmuServiceMode,
+          signalBars,
+          cabinTemp);
+    gLastCabinSetTemp = cabinSetTemp;
+    gLastBlowerLevel = blowerLevel;
+    gLastAcOn = acOn;
+    gLastVentMode = ventMode;
+    gLastDefogMode = defogMode;
+  }
+}
+
+on start
+{
+  gRemoteClimateReq = 0;
+  gTmuLinkState = 0;
+  gTmuServiceMode = 0;
+  gSignalBars = 0;
+  gCabinTemp = 24;
+  gTmuServiceRxMs = 0;
+  gCabinAirRxMs = 0;
+  gLastTmuInputStale = 0;
+  gLastCabinAirInputStale = 0;
+  gLastCabinSetTemp = -1;
+  gLastBlowerLevel = -1;
+  gLastAcOn = -1;
+  gLastVentMode = -1;
+  gLastDefogMode = -1;
+
+  setTimer(tDatcCycle, 100);
+  write("[DATC] start");
+}
+
+on timer tDatcCycle
+{
+
+  publishDatcState();
+  setTimer(tDatcCycle, 100);
+}
+
+on message frmTmuServiceStateMsg
+{
+  gTmuLinkState = clampRange((int)this.TmuLinkState, 0, 3);
+  gTmuServiceMode = clampRange((int)this.TmuServiceMode, 0, 3);
+  gRemoteClimateReq = clampRange((int)this.RemoteClimateReq, 0, 1);
+  gSignalBars = clampRange((int)this.SignalBars, 0, 15);
+  gTmuServiceRxMs = getSimulationTimeMs();
+}
+
+on message frmCabinAirStateMsg
+{
+  gCabinTemp = clampRange((int)this.CabinTemp, 0, 100);
+  gCabinAirRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tDatcCycle);
+}

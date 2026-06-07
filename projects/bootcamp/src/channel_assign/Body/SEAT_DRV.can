@@ -1,0 +1,160 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tSeatDrvCycle;
+  int gSeatPos;
+  int gSeatHeatLvl;
+  int gSeatVentLvl;
+  int gDriverSeatCmd;
+  int gDriveState;
+  dword gSeatCtrlRxMs;
+  dword gVehicleRxMs;
+  int gLastSeatCtrlInputStale;
+  int gLastVehicleInputStale;
+  int gLastPos;
+  int gLastHeat;
+  int gLastVent;
+}
+
+void traceSeatDrvInputHealth(int seatCtrlInputStale, int vehicleInputStale)
+{
+  if (seatCtrlInputStale != gLastSeatCtrlInputStale)
+  {
+    if (seatCtrlInputStale == 1)
+    {
+      write("[SEAT_DRV] seat-control input stale");
+    }
+    else
+    {
+      write("[SEAT_DRV] seat-control input restored");
+    }
+    gLastSeatCtrlInputStale = seatCtrlInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[SEAT_DRV] vehicle input stale");
+    }
+    else
+    {
+      write("[SEAT_DRV] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+int applySeatDelta(int currentPos, int seatCmd)
+{
+  if (seatCmd == 1)
+  {
+    return clampRange(currentPos + 5, 0, 255);
+  }
+  if (seatCmd == 2)
+  {
+    return clampRange(currentPos - 5, 0, 255);
+  }
+  return clampRange(currentPos, 0, 255);
+}
+
+on start
+{
+  gSeatPos = 120;
+  gSeatHeatLvl = 0;
+  gSeatVentLvl = 0;
+  gDriverSeatCmd = 0;
+  gDriveState = 0;
+  gSeatCtrlRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastSeatCtrlInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastPos = -1;
+  gLastHeat = -1;
+  gLastVent = -1;
+  setTimer(tSeatDrvCycle, 100);
+  write("[SEAT_DRV] start");
+}
+
+on message frmSeatControlMsg
+{
+  gDriverSeatCmd = clampRange((int)this.DriverSeatCmd, 0, 7);
+  gSeatHeatLvl = clampRange((int)this.SeatHeatLevel, 0, 15);
+  gSeatVentLvl = clampRange((int)this.SeatVentLevel, 0, 15);
+  gSeatCtrlRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on timer tSeatDrvCycle
+{
+  message frmSeatDrvStateMsg mSeat;
+  int seatCtrlInputStale;
+  int vehicleInputStale;
+  int seatCmd;
+  int driveState;
+  int pos;
+  int heat;
+  int vent;
+
+  seatCtrlInputStale = (ethIsRecentTick(gSeatCtrlRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  traceSeatDrvInputHealth(seatCtrlInputStale, vehicleInputStale);
+
+  seatCmd = gDriverSeatCmd;
+  driveState = gDriveState;
+  heat = gSeatHeatLvl;
+  vent = gSeatVentLvl;
+  if (seatCtrlInputStale == 1)
+  {
+    seatCmd = 0;
+    heat = 0;
+    vent = 0;
+  }
+  if (vehicleInputStale == 1)
+  {
+    driveState = 3;
+  }
+
+  pos = gSeatPos;
+  if (driveState == 0)
+  {
+    pos = applySeatDelta(pos, seatCmd);
+  }
+  gSeatPos = pos;
+
+  mSeat.SeatDrvPos = clampRange(pos, 0, 255);
+  mSeat.SeatDrvHeatLvl = clampRange(heat, 0, 15);
+  mSeat.SeatDrvVentLvl = clampRange(vent, 0, 15);
+  output(mSeat);
+
+  if (mSeat.SeatDrvPos != gLastPos ||
+      mSeat.SeatDrvHeatLvl != gLastHeat ||
+      mSeat.SeatDrvVentLvl != gLastVent)
+  {
+    write("[SEAT_DRV] pos=%d heat=%d vent=%d cmd=%d drive=%d",
+          mSeat.SeatDrvPos,
+          mSeat.SeatDrvHeatLvl,
+          mSeat.SeatDrvVentLvl,
+          seatCmd,
+          driveState);
+    gLastPos = mSeat.SeatDrvPos;
+    gLastHeat = mSeat.SeatDrvHeatLvl;
+    gLastVent = mSeat.SeatDrvVentLvl;
+  }
+
+  setTimer(tSeatDrvCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tSeatDrvCycle);
+}

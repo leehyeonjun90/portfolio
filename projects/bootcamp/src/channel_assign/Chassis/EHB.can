@@ -1,0 +1,168 @@
+/*@!Encoding:949*/
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tEhbCycle;
+  int gBrakePressure;
+  dword gBrakeStatusRxMs;
+  int gAebStopReq;
+  int gAebDecelProfile;
+  int gAebDomainHealth;
+  dword gAebRxMs;
+  int gLastBrakeInputStale;
+  int gLastAebInputStale;
+  int gLastCtrlState;
+  int gLastPressureCmd;
+}
+
+void traceEhbInputHealth(int brakeInputStale, int aebInputStale)
+{
+  if (brakeInputStale != gLastBrakeInputStale)
+  {
+    if (brakeInputStale == 1)
+    {
+      write("[EHB] brake input stale");
+    }
+    else
+    {
+      write("[EHB] brake input restored");
+    }
+    gLastBrakeInputStale = brakeInputStale;
+  }
+
+  if (aebInputStale != gLastAebInputStale)
+  {
+    if (aebInputStale == 1)
+    {
+      write("[EHB] aeb input stale");
+    }
+    else
+    {
+      write("[EHB] aeb input restored");
+    }
+    gLastAebInputStale = aebInputStale;
+  }
+}
+
+int deriveAebPressureCmd(int aebStopReq, int aebDecelProfile, int aebDomainHealth)
+{
+  if (aebDomainHealth == 0)
+  {
+    return 0;
+  }
+  if (aebStopReq == 1)
+  {
+    return 180;
+  }
+  if (aebDecelProfile >= 3)
+  {
+    return 150;
+  }
+  if (aebDecelProfile == 2)
+  {
+    return 110;
+  }
+  if (aebDecelProfile == 1)
+  {
+    return 70;
+  }
+  return 0;
+}
+
+on start
+{
+  gBrakePressure = 0;
+  gBrakeStatusRxMs = 0;
+  gAebStopReq = 0;
+  gAebDecelProfile = 0;
+  gAebDomainHealth = 0;
+  gAebRxMs = 0;
+  gLastBrakeInputStale = 0;
+  gLastAebInputStale = 0;
+  gLastCtrlState = -1;
+  gLastPressureCmd = -1;
+  setTimer(tEhbCycle, 100);
+  write("[EHB] start");
+}
+
+on message frmBrakeStatusMsg
+{
+  gBrakePressure = clampRange((int)this.BrakePressure, 0, 255);
+  gBrakeStatusRxMs = getSimulationTimeMs();
+}
+
+on message frmAebDomainStateMsg
+{
+  gAebStopReq = clampRange((int)this.StopReq, 0, 1);
+  gAebDecelProfile = clampRange((int)this.DecelProfile, 0, 3);
+  gAebDomainHealth = clampRange((int)this.DomainHealth, 0, 3);
+  gAebRxMs = getSimulationTimeMs();
+}
+
+on timer tEhbCycle
+{
+  message frmEhbStateMsg mEhb;
+  int brakeInputStale;
+  int aebInputStale;
+  int brakePressure;
+  int aebStopReq;
+  int aebDecelProfile;
+  int aebDomainHealth;
+  int aebPressureCmd;
+  int pressureCmd;
+  int ctrlState;
+
+  brakeInputStale = (ethIsRecentTick(gBrakeStatusRxMs, 300) == 1) ? 0 : 1;
+  aebInputStale = (ethIsRecentTick(gAebRxMs, 300) == 1) ? 0 : 1;
+  traceEhbInputHealth(brakeInputStale, aebInputStale);
+
+  brakePressure = gBrakePressure;
+  aebStopReq = gAebStopReq;
+  aebDecelProfile = gAebDecelProfile;
+  aebDomainHealth = gAebDomainHealth;
+  if (brakeInputStale == 1)
+  {
+    brakePressure = 0;
+  }
+  if (aebInputStale == 1)
+  {
+    aebStopReq = 0;
+    aebDecelProfile = 0;
+    aebDomainHealth = 0;
+  }
+
+  aebPressureCmd = deriveAebPressureCmd(aebStopReq, aebDecelProfile, aebDomainHealth);
+  pressureCmd = brakePressure;
+  if (aebPressureCmd > pressureCmd)
+  {
+    pressureCmd = aebPressureCmd;
+  }
+  ctrlState = (brakePressure > 0) ? 1 : 0;
+  if (aebPressureCmd > 0)
+  {
+    ctrlState = 2;
+  }
+
+  mEhb.EhbCtrlState = clampRange(ctrlState, 0, 7);
+  mEhb.EhbPressureCmd = clampRange(pressureCmd, 0, 255);
+  output(mEhb);
+
+  if (mEhb.EhbCtrlState != gLastCtrlState ||
+      mEhb.EhbPressureCmd != gLastPressureCmd)
+  {
+    write("[EHB] state=%d pressure=%d", mEhb.EhbCtrlState, mEhb.EhbPressureCmd);
+    gLastCtrlState = mEhb.EhbCtrlState;
+    gLastPressureCmd = mEhb.EhbPressureCmd;
+  }
+
+  setTimer(tEhbCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tEhbCycle);
+}

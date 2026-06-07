@@ -1,0 +1,215 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tDigitalKeyCycle;
+  int gTmuServiceMode;
+  int gSignalBars;
+  int gDriveState;
+  int gKeySyncAge;
+  dword gTmuServiceRxMs;
+  dword gVehicleRxMs;
+  int gLastTmuInputStale;
+  int gLastVehicleInputStale;
+  int gLastDkeyState;
+  int gLastAuthMode;
+  int gLastAccessState;
+  int gLastSecurityGrade;
+}
+
+void traceDkeyInputHealth(int tmuInputStale, int vehicleInputStale)
+{
+  if (tmuInputStale != gLastTmuInputStale)
+  {
+    if (tmuInputStale == 1)
+    {
+      write("[DKEY] tmu input stale");
+    }
+    else
+    {
+      write("[DKEY] tmu input restored");
+    }
+    gLastTmuInputStale = tmuInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[DKEY] vehicle input stale");
+    }
+    else
+    {
+      write("[DKEY] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+void publishDigitalKeyState()
+{
+  message frmDigitalKeyStateMsg mDkey;
+  int tmuInputStale;
+  int vehicleInputStale;
+  int driveState;
+  int tmuServiceMode;
+  int signalBars;
+  int dkeyState;
+  int authMode;
+  int accessState;
+  int securityGrade;
+  int keyPresence;
+
+  tmuInputStale = (ethIsRecentTick(gTmuServiceRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  traceDkeyInputHealth(tmuInputStale, vehicleInputStale);
+
+  driveState = gDriveState;
+  tmuServiceMode = gTmuServiceMode;
+  signalBars = gSignalBars;
+  if (tmuInputStale == 1)
+  {
+    tmuServiceMode = 0;
+    signalBars = 0;
+  }
+  if (vehicleInputStale == 1)
+  {
+    driveState = 0;
+  }
+
+  dkeyState = 0;
+  if (tmuServiceMode > 0 && signalBars >= 1)
+  {
+    dkeyState = 1;
+  }
+  if (vehicleInputStale == 0 &&
+      driveState == 0 &&
+      tmuServiceMode == 1 &&
+      signalBars >= 3)
+  {
+    dkeyState = 2;
+  }
+  else if (vehicleInputStale == 0 &&
+           driveState > 0 &&
+           tmuServiceMode > 0)
+  {
+    dkeyState = 3;
+  }
+
+  authMode = 0;
+  if (tmuServiceMode > 0)
+  {
+    authMode = 1;
+  }
+  if (dkeyState == 2 && signalBars >= 3)
+  {
+    authMode = 2;
+  }
+
+  accessState = 0;
+  if (dkeyState == 1)
+  {
+    accessState = 1;
+  }
+  else if (dkeyState == 2)
+  {
+    accessState = 2;
+  }
+  else if (dkeyState == 3)
+  {
+    accessState = 3;
+  }
+
+  if (dkeyState == 2)
+  {
+    gKeySyncAge = 0;
+  }
+  else
+  {
+    gKeySyncAge = clampRange(gKeySyncAge + 5, 0, 255);
+  }
+
+  securityGrade = 0;
+  if (dkeyState == 2 && signalBars >= 3)
+  {
+    securityGrade = 2;
+  }
+  else if (tmuServiceMode > 0 && signalBars >= 1)
+  {
+    securityGrade = 1;
+  }
+
+  keyPresence = (tmuServiceMode > 0 && signalBars > 0) ? 1 : 0;
+
+  mDkey.DKeyState = clampRange(dkeyState, 0, 7);
+  mDkey.AuthMode = clampRange(authMode, 0, 3);
+  mDkey.VehicleAccessState = clampRange(accessState, 0, 7);
+  mDkey.KeySyncAge = clampRange(gKeySyncAge, 0, 255);
+  mDkey.SecurityGrade = clampRange(securityGrade, 0, 15);
+  mDkey.KeyPresence = clampRange(keyPresence, 0, 1);
+  output(mDkey);
+
+  if (mDkey.DKeyState != gLastDkeyState ||
+      mDkey.AuthMode != gLastAuthMode ||
+      mDkey.VehicleAccessState != gLastAccessState ||
+      mDkey.SecurityGrade != gLastSecurityGrade)
+  {
+    write("[DKEY] state=%d auth=%d access=%d grade=%d syncAge=%d bars=%d drive=%d",
+          mDkey.DKeyState,
+          mDkey.AuthMode,
+          mDkey.VehicleAccessState,
+          mDkey.SecurityGrade,
+          mDkey.KeySyncAge,
+          signalBars,
+          driveState);
+    gLastDkeyState = mDkey.DKeyState;
+    gLastAuthMode = mDkey.AuthMode;
+    gLastAccessState = mDkey.VehicleAccessState;
+    gLastSecurityGrade = mDkey.SecurityGrade;
+  }
+}
+
+on start
+{
+  gTmuServiceMode = 0;
+  gSignalBars = 0;
+  gDriveState = 0;
+  gKeySyncAge = 0;
+  gTmuServiceRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastTmuInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastDkeyState = -1;
+  gLastAuthMode = -1;
+  gLastAccessState = -1;
+  gLastSecurityGrade = -1;
+  setTimer(tDigitalKeyCycle, 100);
+  write("[DKEY] start");
+}
+
+on timer tDigitalKeyCycle
+{
+  publishDigitalKeyState();
+  setTimer(tDigitalKeyCycle, 100);
+}
+
+on message frmTmuServiceStateMsg
+{
+  gTmuServiceMode = clampRange((int)this.TmuServiceMode, 0, 3);
+  gSignalBars = clampRange((int)this.SignalBars, 0, 15);
+  gTmuServiceRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tDigitalKeyCycle);
+}

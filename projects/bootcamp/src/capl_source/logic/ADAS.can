@@ -1,0 +1,1606 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tAdasCycle;
+  msTimer tArbiter50;
+  long gEthSocket;
+  long gEthTxSocket;
+  dword gEthTargetIp;
+  char gEthRxBuffer[64];
+  int gLastWarningState;
+  dword gHighwayNoSteerStartMs;
+  int gLastRiskLevel;
+  int gRiskPublishTick;
+  int gObjectStatePublishTick;
+  dword gLastObjectTrackRxMs;
+  int gLastObjectRiskClass;
+  int gLastObjectEventCode;
+  int gLastInputFilterState;
+  int gLastAlertLevel;
+  int gLastAlertType;
+  int gLastDecelAssistReq;
+  int gLastDriverReleaseReason;
+  int gLastReportedDriverReleaseReason;
+  int gPrevEmergencyContext;
+  dword gLastStableAlertMs;
+  int gStableAlertLevel;
+  int gStableAlertType;
+  int gLastStaleInputState;
+  int gLastFallbackState;
+  int gLastObjectRiskLevel;
+  int gLastObjectAlertLevel;
+  int gLastObjectAlertType;
+  dword gAccelGroupHoldEndMs;
+  dword gSteerGroupHoldEndMs;
+  int gLastAccelGroupActive;
+  int gLastSteerGroupActive;
+  int gCanVehicleSpeed;
+  int gCanDriveState;
+  int gCanSteeringInput;
+  int gCanBrakePressure;
+  int gCanBrakeMode;
+  int gCanAccelPedal;
+  int gCanNavRouteClass;
+  int gCanNavGuideType;
+  int gCanNavSpeedLimit;
+  int gCanDriveMode;
+  int gCanEcoMode;
+  int gCanSportMode;
+  int gCanTurnLampState;
+  int gCanDriverSeatBelt;
+  int gCanPassengerSeatBelt;
+  int gCanSeatBeltWarnLvl;
+  dword gVehicleStateRxMs;
+  dword gSteeringStateRxMs;
+  dword gBrakeStatusRxMs;
+  dword gPedalInputRxMs;
+  dword gNavStateRxMs;
+  dword gVehicleModeRxMs;
+  dword gLampControlRxMs;
+  dword gSeatBeltRxMs;
+  dword gLastAcceptedObjectSrcIp;
+  dword gLastAcceptedObjectSrcPort;
+  dword gLastRejectedObjectSrcIp;
+  dword gLastRejectedObjectSrcPort;
+}
+
+int getAdasTxPort()
+{
+  return ethBackbonePort() + 5;
+}
+
+dword getAdasLocalIp()
+{
+  return IpGetAddressAsNumber("192.168.1.15");
+}
+
+int deriveBaseZoneContextFromNavState(int routeClass, int guideType)
+{
+  routeClass = clampRange(routeClass, 0, 3);
+  guideType = clampRange(guideType, 0, 3);
+
+  if (routeClass == 1)
+  {
+    return 1;
+  }
+  if (routeClass == 2)
+  {
+    return 2;
+  }
+  if (routeClass == 3)
+  {
+    return (guideType == 2) ? 4 : 3;
+  }
+  return 0;
+}
+
+void publishBackboneDecisionFrames()
+{
+  message ethEmergencyRiskMsg mRisk;
+  message ethDecelAssistReqMsg mDecel;
+  message ethSelectedAlertMsg mAlert;
+  message ethObjectRiskStateMsg mObjRisk;
+  message ethObjectScenarioAlertMsg mObjAlert;
+  message frmAdasDomainStateMsg mDomain;
+  char riskFrame[8];
+  char decelFrame[8];
+  char alertFrame[4];
+  char objRiskFrame[8];
+  char objAlertFrame[6];
+  int emergencyContext;
+  int effectiveAlertLevel;
+  int effectiveAlertType;
+  int vehicleSpeed;
+  long txSocket;
+
+  emergencyContext = clampRange((int)@Core::emergencyContext, 0, 2);
+  vehicleSpeed = gCanVehicleSpeed;
+  if (ethIsRecentTick(gVehicleStateRxMs, 300) == 0)
+  {
+    vehicleSpeed = 0;
+  }
+  effectiveAlertLevel = clampRange((int)@CoreState::selectedAlertEffectiveLevel, 0, 7);
+  effectiveAlertType = clampRange((int)@CoreState::selectedAlertEffectiveType, 0, 15);
+  if (effectiveAlertLevel == 0 && effectiveAlertType == 0)
+  {
+    effectiveAlertLevel = clampRange((int)@Core::selectedAlertLevel, 0, 7);
+    effectiveAlertType = clampRange((int)@Core::selectedAlertType, 0, 15);
+  }
+  txSocket = gEthTxSocket;
+  if (txSocket == ethInvalidSocket())
+  {
+    return;
+  }
+
+  ethInitFrame(riskFrame, ethMsgEmergencyRisk(), 4);
+  ethSetU8(riskFrame, 0, clampRange((int)@Core::proximityRiskLevel, 0, 100));
+  ethSetU8(riskFrame, 1, clampRange((int)@CoreState::emergencyIngressEtaSec, 0, 255));
+  ethSetU8(riskFrame, 2, clampRange(vehicleSpeed, 0, 255));
+  ethSetU8(riskFrame, 3, clampRange((int)@CoreState::emergencyIngressDirection, 0, 3) |
+                       (clampRange(emergencyContext, 0, 3) << 2));
+  ethSendFrame(txSocket, gEthTargetIp, ethMsgEmergencyRisk(), riskFrame, 4);
+
+  /* Preserve donor panel/readback seam on the CAN-stub network while raw ETH stays active. */
+  mRisk.RiskLevel = clampRange((int)@Core::proximityRiskLevel, 0, 100);
+  mRisk.EtaSeconds = clampRange((int)@CoreState::emergencyIngressEtaSec, 0, 255);
+  mRisk.VehicleSpeed = clampRange(vehicleSpeed, 0, 255);
+  mRisk.EmergencyDirection = clampRange((int)@CoreState::emergencyIngressDirection, 0, 3);
+  mRisk.EmergencyType = clampRange(emergencyContext, 0, 2);
+  output(mRisk);
+
+  ethInitFrame(decelFrame, ethMsgDecelAssist(), 3);
+  ethSetU8(decelFrame, 0, ((((int)@Core::decelAssistReq) == 1) ? 1 : 0) |
+                          (clampRange((int)@Core::failSafeMode, 0, 2) << 1) |
+                          (clampRange((int)@CoreState::driverReleaseReason, 0, 3) << 3) |
+                          (clampRange(emergencyContext, 0, 3) << 5));
+  ethSetU8(decelFrame, 1, clampRange((int)@Core::proximityRiskLevel, 0, 100));
+  ethSetU8(decelFrame, 2, ((((int)@Core::decelAssistDecisionReq) == 1) ? 1 : 0) |
+                          (clampRange((int)@CoreState::decelGateReason, 0, 3) << 1));
+  ethSendFrame(txSocket, gEthTargetIp, ethMsgDecelAssist(), decelFrame, 3);
+
+  mDecel.DecelAssistReq = ((((int)@Core::decelAssistReq) == 1) ? 1 : 0);
+  mDecel.FailSafeMode = clampRange((int)@Core::failSafeMode, 0, 2);
+  mDecel.DriverReleaseReason = clampRange((int)@CoreState::driverReleaseReason, 0, 3);
+  mDecel.EmergencyContext = clampRange(emergencyContext, 0, 2);
+  mDecel.RiskLevel = clampRange((int)@Core::proximityRiskLevel, 0, 100);
+  output(mDecel);
+
+  ethInitFrame(alertFrame, ethMsgSelectedAlert(), 2);
+  ethSetU8(alertFrame, 0, clampRange(effectiveAlertLevel, 0, 7) |
+                          (clampRange(effectiveAlertType, 0, 7) << 3));
+  ethSetU8(alertFrame, 1, (((int)@Core::timeoutClear) == 1) ? 1 : 0);
+  ethSendFrame(txSocket, gEthTargetIp, ethMsgSelectedAlert(), alertFrame, 2);
+
+  mAlert.selectedAlertLevel = clampRange(effectiveAlertLevel, 0, 7);
+  mAlert.selectedAlertType = clampRange(effectiveAlertType, 0, 7);
+  mAlert.timeoutClear = (((int)@Core::timeoutClear) == 1) ? 1 : 0;
+  output(mAlert);
+
+  ethInitFrame(objRiskFrame, ethMsgObjectRiskState(), 6);
+  ethSetU8(objRiskFrame, 0, clampRange((int)@Core::objectRiskClass, 0, 7));
+  ethSetU16Le(objRiskFrame, 1, clampRange((int)@Core::objectTtcMin, 0, 10000));
+  ethSetU8(objRiskFrame, 3, clampRange(gLastObjectRiskLevel, 0, 100));
+  ethSetU8(objRiskFrame, 4, clampRange((int)@Core::objectTrackValid, 0, 1));
+  ethSetU8(objRiskFrame, 5, clampRange((int)@Core::objectConfidence, 0, 100));
+  ethSendFrame(txSocket, gEthTargetIp, ethMsgObjectRiskState(), objRiskFrame, 6);
+
+  mObjRisk.ObjectRiskClass = clampRange((int)@Core::objectRiskClass, 0, 7);
+  mObjRisk.ObjectTtcMinMs = clampRange((int)@Core::objectTtcMin, 0, 10000);
+  mObjRisk.ObjectRiskLevel = clampRange(gLastObjectRiskLevel, 0, 100);
+  mObjRisk.ObjectTrackValid = clampRange((int)@Core::objectTrackValid, 0, 1);
+  output(mObjRisk);
+
+  ethInitFrame(objAlertFrame, ethMsgObjectScenarioAlert(), 3);
+  ethSetU8(objAlertFrame, 0, clampRange(gLastObjectAlertLevel, 0, 7) |
+                            (clampRange(gLastObjectAlertType, 0, 7) << 3));
+  ethSetU8(objAlertFrame, 1, clampRange((int)@Core::intersectionConflictFlag, 0, 1) |
+                            (clampRange((int)@Core::mergeCutInFlag, 0, 1) << 1));
+  ethSetU8(objAlertFrame, 2, clampRange((int)@Core::objectRiskClass, 0, 7));
+  ethSendFrame(txSocket, gEthTargetIp, ethMsgObjectScenarioAlert(), objAlertFrame, 3);
+
+  mObjAlert.ObjectAlertLevel = clampRange(gLastObjectAlertLevel, 0, 7);
+  mObjAlert.ObjectAlertType = clampRange(gLastObjectAlertType, 0, 7);
+  mObjAlert.IntersectionConflict = clampRange((int)@Core::intersectionConflictFlag, 0, 1);
+  mObjAlert.MergeCutIn = clampRange((int)@Core::mergeCutInFlag, 0, 1);
+  mObjAlert.ObjectRiskClass = clampRange((int)@Core::objectRiskClass, 0, 7);
+  output(mObjAlert);
+
+  mDomain.WarningPathStatus = clampRange((int)@CoreState::warningPathStatus, 0, 3);
+  mDomain.E2eHealthState = clampRange((int)@CoreState::e2eHealthState, 0, 3);
+  mDomain.FailSafeMode = clampRange((int)@Core::failSafeMode, 0, 3);
+  mDomain.DecelAssistReq = ((((int)@Core::decelAssistReq) == 1) ? 1 : 0);
+  mDomain.EmergencyContext = clampRange(emergencyContext, 0, 3);
+  mDomain.SelectedAlertLevel = clampRange(effectiveAlertLevel, 0, 7);
+  mDomain.ObjectRiskClass = clampRange((int)@Core::objectRiskClass, 0, 7);
+  mDomain.RiskLevel = clampRange((int)@Core::proximityRiskLevel, 0, 100);
+  mDomain.TtcBucket = clampRange((int)@Core::objectTtcMin / 100, 0, 255);
+  mDomain.SelectedAlertType = clampRange(effectiveAlertType, 0, 15);
+  mDomain.TimeoutClear = (((int)@Core::timeoutClear) == 1) ? 1 : 0;
+  output(mDomain);
+}
+
+int calcProximityRisk(int emergencyContext, int etaSec, int speed, int emergencyDirection, int driveState)
+{
+  int etaScore;
+  int speedScore;
+  int directionScore;
+  int typeBias;
+  int riskLevel;
+
+  if (driveState != 3 || emergencyContext == 0)
+  {
+    return 0;
+  }
+
+  etaScore = 100 - (etaSec * 5);
+  etaScore = clampRange(etaScore, 0, 100);
+  speedScore = clampRange((speed * 40) / 255, 0, 40);
+
+  if (emergencyDirection == 0)
+  {
+    directionScore = 25;
+  }
+  else if (emergencyDirection == 3)
+  {
+    directionScore = 10;
+  }
+  else
+  {
+    directionScore = 18;
+  }
+
+  typeBias = (emergencyContext == 2) ? 12 : 6;
+  riskLevel = ((etaScore * 55) / 100) + speedScore + directionScore + typeBias;
+  return clampRange(riskLevel, 0, 100);
+}
+
+int calcObjectTtcMs(int objectRange, int objectRelSpeed)
+{
+  long closingKph;
+  long ttcMs;
+
+  if (objectRelSpeed >= 0 || objectRange <= 0)
+  {
+    return 10000;
+  }
+
+  closingKph = -objectRelSpeed;
+  if (closingKph <= 0)
+  {
+    return 10000;
+  }
+
+  ttcMs = ((long)objectRange * 3600) / closingKph;
+  if (ttcMs < 0)
+  {
+    ttcMs = 0;
+  }
+  if (ttcMs > 10000)
+  {
+    ttcMs = 10000;
+  }
+  return (int)ttcMs;
+}
+
+int calcObjectRisk(int ttcMs, int confidence, int objectRange,
+                   int intersectionConflictFlag, int mergeCutInFlag)
+{
+  int baseRisk;
+  int rangeBias;
+  int confidenceBias;
+  int scenarioBias;
+  int riskLevel;
+
+  if (confidence < 20)
+  {
+    return 0;
+  }
+
+  if (ttcMs <= 1200)
+  {
+    baseRisk = 85;
+  }
+  else if (ttcMs <= 2000)
+  {
+    baseRisk = 72;
+  }
+  else if (ttcMs <= 3000)
+  {
+    baseRisk = 58;
+  }
+  else if (ttcMs <= 4500)
+  {
+    baseRisk = 40;
+  }
+  else
+  {
+    baseRisk = 18;
+  }
+
+  rangeBias = clampRange((500 - objectRange) / 10, 0, 20);
+  confidenceBias = clampRange((confidence - 50) / 5, -10, 10);
+  scenarioBias = 0;
+  if (intersectionConflictFlag == 1)
+  {
+    scenarioBias = scenarioBias + 8;
+  }
+  if (mergeCutInFlag == 1)
+  {
+    scenarioBias = scenarioBias + 6;
+  }
+
+  riskLevel = baseRisk + rangeBias + confidenceBias + scenarioBias;
+  return clampRange(riskLevel, 0, 100);
+}
+
+int calcObjectRiskClass(int objectTrackValid, int confidence, int objectRiskLevel)
+{
+  if (objectTrackValid == 0)
+  {
+    return 0;
+  }
+  if (confidence < 30)
+  {
+    return 1;
+  }
+  if (objectRiskLevel >= 85)
+  {
+    return 5;
+  }
+  if (objectRiskLevel >= 70)
+  {
+    return 4;
+  }
+  if (objectRiskLevel >= 55)
+  {
+    return 3;
+  }
+  if (objectRiskLevel >= 35)
+  {
+    return 2;
+  }
+  return 1;
+}
+
+int isObjectWarningActive(int objectTrackValid, int objectConfidence, int objectRiskClass)
+{
+  if (objectTrackValid == 1 &&
+      objectConfidence >= 30 &&
+      objectRiskClass >= 2)
+  {
+    return 1;
+  }
+  return 0;
+}
+
+int getDecelRiskOnThreshold(int emergencyContext, int objectWarningActive)
+{
+  if (emergencyContext == 0 && objectWarningActive == 1)
+  {
+    return 75;
+  }
+  return 70;
+}
+
+int getDecelRiskOffThreshold(int emergencyContext, int objectWarningActive)
+{
+  if (emergencyContext == 0 && objectWarningActive == 1)
+  {
+    return 60;
+  }
+  return 55;
+}
+
+int getBaseAlertLevel(int baseZoneContext, int warningState)
+{
+  if (baseZoneContext == 3 || baseZoneContext == 4)
+  {
+    return 2;
+  }
+  if (warningState <= 0)
+  {
+    return 0;
+  }
+  if (baseZoneContext == 1)
+  {
+    return 3;
+  }
+  if (baseZoneContext == 2)
+  {
+    return 2;
+  }
+  /* zone=0 (일반도로): A+B 복합(warningState=2) → 중간 경고(2),
+                        A단독/B단독(warningState=1) → 경미 경고(1) */
+  if (warningState >= 2)
+  {
+    return 2;
+  }
+  return 1;
+}
+
+int getBaseAlertType(int baseZoneContext, int warningState)
+{
+  if (baseZoneContext == 3)
+  {
+    return 5;
+  }
+  if (baseZoneContext == 4)
+  {
+    return 6;
+  }
+  if (warningState <= 0)
+  {
+    return 0;
+  }
+  if (baseZoneContext == 1)
+  {
+    return 3;
+  }
+  if (baseZoneContext == 2)
+  {
+    return 4;
+  }
+  /* zone=0: A+B 복합(warningState=2) → type=4(오렌지 펄스),
+             A단독/B단독(warningState=1) → type=1(경미 경고) */
+  if (warningState >= 2)
+  {
+    return 4;
+  }
+  return 1;
+}
+
+int getEmergencyAlertLevel(int emergencyContext)
+{
+  if (emergencyContext == 2)
+  {
+    return 7;
+  }
+  if (emergencyContext == 1)
+  {
+    return 6;
+  }
+  return 0;
+}
+
+int getEmergencyAlertType(int emergencyContext)
+{
+  if (emergencyContext == 2)
+  {
+    return 2;
+  }
+  if (emergencyContext == 1)
+  {
+    return 1;
+  }
+  return 0;
+}
+
+int getObjectAlertLevel(int intersectionConflictFlag, int mergeCutInFlag, int objectRiskClass)
+{
+  if (intersectionConflictFlag == 1 || mergeCutInFlag == 1)
+  {
+    return 4;
+  }
+  if (objectRiskClass >= 4)
+  {
+    return 5;
+  }
+  return 3;
+}
+
+int getObjectAlertType(int intersectionConflictFlag, int mergeCutInFlag)
+{
+  if (intersectionConflictFlag == 1)
+  {
+    return 5;
+  }
+  if (mergeCutInFlag == 1)
+  {
+    return 6;
+  }
+  return 4;
+}
+
+void runArbiter()
+{
+  int manualMode;
+  int manualAlertOverride;
+  int manualAlertMode;
+  int manualRoadZone;
+  int manualNavDirection;
+  int emergencyContext;
+  int warningState;
+  int baseZoneContext;
+  int proximityRiskLevel;
+  int failSafeMode;
+  int driveState;
+  int steeringInput;
+  int brakePedal;
+  int accelPedal;
+  int objectTrackValid;
+  int objectConfidence;
+  int objectRiskClass;
+  int objectTtcMin;
+  int intersectionConflictFlag;
+  int mergeCutInFlag;
+  int objectWarningActive;
+  int decelRiskOnThreshold;
+  int decelRiskOffThreshold;
+  int turnLampState;
+  int driveMode;
+  int ecoMode;
+  int sportMode;
+  int driverSeatBelt;
+  int passengerSeatBelt;
+  int seatBeltWarnLvl;
+  int seatBeltOverride;
+  int timeoutClear;
+  int boundaryStatus;
+  int staleInput;
+  int fallbackApplied;
+  int duplicatePopupGuard;
+  dword nowMs;
+  dword lastEmergencyRxMs;
+  int preAdjustAlertLevel;
+  int preAdjustAlertType;
+  int prevDecelDecisionReq;
+  int decelDecisionReq;
+  int decelAssistReq;
+  int decelGateReason;
+  int driverReleaseReason;
+  int baseAlertLevel;
+  int baseAlertType;
+  int selectedAlertDecisionLevel;
+  int selectedAlertDecisionType;
+  int selectedAlertLevel;
+  int selectedAlertType;
+  int directBaseZoneContextHint;
+  int directSelectedAlertLevelHint;
+  int directSelectedAlertTypeHint;
+
+  manualMode = (((int)@Test::scenarioActiveId) == 0) ? 1 : 0;
+  manualAlertOverride = clampRange((int)@Inject::manualAlertOverrideCmd, 0, 255);
+  manualAlertMode = (manualMode == 1 &&
+                     (manualAlertOverride > 0 ||
+                      ((int)@Inject::roadZone) > 0 ||
+                      ((int)@Inject::navDirection) > 0 ||
+                      ((int)@Inject::zoneDistance) > 0 ||
+                      ((int)@Inject::speedLimit) > 0 ||
+                      ((int)@Inject::emergencyActiveCmd) > 0)) ? 1 : 0;
+  directBaseZoneContextHint = clampRange((int)@Core::baseZoneContext, 0, 4);
+  directSelectedAlertLevelHint = clampRange((int)@Core::selectedAlertLevel, 0, 7);
+  directSelectedAlertTypeHint = clampRange((int)@Core::selectedAlertType, 0, 15);
+  emergencyContext = clampRange((int)@Core::emergencyContext, 0, 2);
+  warningState = clampRange((int)@Core::warningState, 0, 2);
+  if (ethIsRecentTick(gNavStateRxMs, 300) == 1)
+  {
+    baseZoneContext = deriveBaseZoneContextFromNavState(gCanNavRouteClass, gCanNavGuideType);
+  }
+  else
+  {
+    baseZoneContext = 0;
+  }
+  if (manualAlertMode == 1)
+  {
+    manualRoadZone = clampRange((int)@Inject::roadZone, 0, 3);
+    manualNavDirection = clampRange((int)@Inject::navDirection, 0, 3);
+    baseZoneContext = deriveBaseZoneContextFromNavState(manualRoadZone, manualNavDirection);
+    if (baseZoneContext == 0 && directBaseZoneContextHint > 0)
+    {
+      baseZoneContext = directBaseZoneContextHint;
+    }
+  }
+  proximityRiskLevel = clampRange((int)@Core::proximityRiskLevel, 0, 100);
+  failSafeMode = clampRange((int)@Core::failSafeMode, 0, 2);
+  if (ethIsRecentTick(gVehicleStateRxMs, 300) == 1)
+  {
+    driveState = clampRange(gCanDriveState, 0, 3);
+  }
+  else
+  {
+    driveState = clampRange((int)@Chassis::driveState, 0, 3);
+  }
+  if (ethIsRecentTick(gSteeringStateRxMs, 300) == 1)
+  {
+    steeringInput = clampRange(gCanSteeringInput, 0, 1);
+  }
+  else
+  {
+    steeringInput = 0;
+  }
+  if (ethIsRecentTick(gBrakeStatusRxMs, 300) == 1)
+  {
+    brakePedal = clampRange(gCanBrakePressure / 2, 0, 100);
+    if (gCanBrakeMode > 0 && brakePedal == 0)
+    {
+      brakePedal = 1;
+    }
+  }
+  else
+  {
+    brakePedal = 0;
+  }
+  if (ethIsRecentTick(gPedalInputRxMs, 300) == 1)
+  {
+    accelPedal = clampRange(gCanAccelPedal, 0, 100);
+  }
+  else
+  {
+    accelPedal = 0;
+  }
+  objectTrackValid = clampRange((int)@Core::objectTrackValid, 0, 1);
+  objectConfidence = clampRange((int)@Core::objectConfidence, 0, 100);
+  objectRiskClass = clampRange((int)@Core::objectRiskClass, 0, 7);
+  objectTtcMin = clampRange((int)@Core::objectTtcMin, 0, 10000);
+  intersectionConflictFlag = clampRange((int)@Core::intersectionConflictFlag, 0, 1);
+  mergeCutInFlag = clampRange((int)@Core::mergeCutInFlag, 0, 1);
+  timeoutClear = (((int)@Core::timeoutClear) == 1) ? 1 : 0;
+  boundaryStatus = clampRange((int)@CoreState::domainBoundaryStatus, 0, 1);
+  duplicatePopupGuard = clampRange((int)@CoreState::duplicatePopupGuard, 0, 5000);
+  lastEmergencyRxMs = (dword)@CoreState::lastEmergencyRxMs;
+  nowMs = getSimulationTimeMs();
+  staleInput = 0;
+  fallbackApplied = 0;
+  objectWarningActive = isObjectWarningActive(objectTrackValid, objectConfidence, objectRiskClass);
+  if (ethIsRecentTick(gLampControlRxMs, 300) == 1)
+  {
+    turnLampState = clampRange(gCanTurnLampState, 0, 3);
+  }
+  else
+  {
+    turnLampState = clampRange((int)@CoreState::turnLampState, 0, 3);
+  }
+  if (ethIsRecentTick(gVehicleModeRxMs, 300) == 1)
+  {
+    driveMode = clampRange(gCanDriveMode, 0, 7);
+    ecoMode = clampRange(gCanEcoMode, 0, 1);
+    sportMode = clampRange(gCanSportMode, 0, 1);
+  }
+  else
+  {
+    driveMode = 0;
+    ecoMode = 0;
+    sportMode = 0;
+  }
+  if (ethIsRecentTick(gSeatBeltRxMs, 300) == 1)
+  {
+    driverSeatBelt = clampRange(gCanDriverSeatBelt, 0, 1);
+    passengerSeatBelt = clampRange(gCanPassengerSeatBelt, 0, 1);
+    seatBeltWarnLvl = clampRange(gCanSeatBeltWarnLvl, 0, 3);
+  }
+  else
+  {
+    driverSeatBelt = clampRange((int)@CoreState::driverSeatBelt, 0, 1);
+    passengerSeatBelt = clampRange((int)@CoreState::passengerSeatBelt, 0, 1);
+    seatBeltWarnLvl = clampRange((int)@CoreState::seatBeltWarnLvl, 0, 3);
+  }
+  seatBeltOverride = clampRange((int)@Test::seatBeltOverride, 0, 3);
+  if (seatBeltOverride == 1 || seatBeltOverride == 3)
+  {
+    driverSeatBelt = 0;
+  }
+  if (seatBeltOverride == 2 || seatBeltOverride == 3)
+  {
+    passengerSeatBelt = 0;
+  }
+  if (seatBeltOverride > 0 && seatBeltWarnLvl < 2)
+  {
+    seatBeltWarnLvl = 2;
+  }
+
+  prevDecelDecisionReq = (((int)@Core::decelAssistDecisionReq) == 1) ? 1 : 0;
+  baseAlertLevel = 0;
+  baseAlertType = 0;
+  selectedAlertDecisionLevel = 0;
+  selectedAlertDecisionType = 0;
+  selectedAlertLevel = 0;
+  selectedAlertType = 0;
+  decelDecisionReq = prevDecelDecisionReq;
+  decelAssistReq = prevDecelDecisionReq;
+  decelGateReason = 0;
+  driverReleaseReason = 0;
+
+  decelRiskOnThreshold = getDecelRiskOnThreshold(emergencyContext, objectWarningActive);
+  decelRiskOffThreshold = getDecelRiskOffThreshold(emergencyContext, objectWarningActive);
+
+  if (driveState == 3 && (emergencyContext > 0 || objectWarningActive == 1))
+  {
+    if (decelDecisionReq == 0 && proximityRiskLevel >= decelRiskOnThreshold)
+    {
+      decelDecisionReq = 1;
+    }
+    else if (decelDecisionReq == 1 && proximityRiskLevel <= decelRiskOffThreshold)
+    {
+      decelDecisionReq = 0;
+    }
+  }
+  else
+  {
+    decelDecisionReq = 0;
+  }
+
+  if (decelDecisionReq == 1)
+  {
+    if (brakePedal >= 15)
+    {
+      decelDecisionReq = 0;
+      driverReleaseReason = 2;
+    }
+    else if (steeringInput == 1)
+    {
+      decelDecisionReq = 0;
+      driverReleaseReason = 1;
+    }
+  }
+
+  decelAssistReq = decelDecisionReq;
+  decelGateReason = driverReleaseReason;
+
+  if (decelDecisionReq == 1)
+  {
+    gLastDriverReleaseReason = 0;
+  }
+  else if (driverReleaseReason != 0)
+  {
+    gLastDriverReleaseReason = driverReleaseReason;
+  }
+  else
+  {
+    gLastDriverReleaseReason = 0;
+  }
+
+  baseAlertLevel = getBaseAlertLevel(baseZoneContext, warningState);
+  baseAlertType = getBaseAlertType(baseZoneContext, warningState);
+
+  if (emergencyContext > 0 && gPrevEmergencyContext == 0)
+  {
+    write("[ADAS] Alert preempt base lvl=%d type=%d -> emergency=%d",
+          baseAlertLevel, baseAlertType, emergencyContext);
+  }
+
+  if (emergencyContext == 2)
+  {
+    selectedAlertLevel = 7;
+    selectedAlertType = 2;
+  }
+  else if (emergencyContext == 1)
+  {
+    selectedAlertLevel = 6;
+    selectedAlertType = 1;
+  }
+  else if (gPrevEmergencyContext > 0)
+  {
+    selectedAlertLevel = baseAlertLevel;
+    selectedAlertType = baseAlertType;
+  }
+  else
+  {
+    selectedAlertLevel = baseAlertLevel;
+    selectedAlertType = baseAlertType;
+    if (objectWarningActive == 1)
+    {
+      selectedAlertLevel = getObjectAlertLevel(intersectionConflictFlag, mergeCutInFlag, objectRiskClass);
+      selectedAlertType = getObjectAlertType(intersectionConflictFlag, mergeCutInFlag);
+    }
+  }
+
+  if (decelDecisionReq == 1)
+  {
+    if (emergencyContext > 0)
+    {
+      selectedAlertLevel = getEmergencyAlertLevel(emergencyContext);
+      selectedAlertType = getEmergencyAlertType(emergencyContext);
+    }
+    else if (objectWarningActive == 1)
+    {
+      if (selectedAlertLevel < 5)
+      {
+        selectedAlertLevel = 5;
+      }
+      if (selectedAlertType == 0)
+      {
+        selectedAlertType = 4;
+      }
+    }
+  }
+
+  if (manualAlertMode == 1)
+  {
+    if (directSelectedAlertLevelHint > 0)
+    {
+      selectedAlertLevel = directSelectedAlertLevelHint;
+    }
+    if (directSelectedAlertTypeHint > 0)
+    {
+      selectedAlertType = directSelectedAlertTypeHint;
+    }
+  }
+
+  selectedAlertDecisionLevel = selectedAlertLevel;
+  selectedAlertDecisionType = selectedAlertType;
+
+  if (timeoutClear == 1)
+  {
+    staleInput = 1;
+  }
+  else if (emergencyContext > 0 && lastEmergencyRxMs > 0 &&
+           (nowMs - lastEmergencyRxMs) >= 1000)
+  {
+    staleInput = 1;
+  }
+  else if (boundaryStatus == 0 && (emergencyContext > 0 || selectedAlertLevel > 0))
+  {
+    staleInput = 1;
+  }
+  if (staleInput == 1)
+  {
+    if (selectedAlertLevel < 3)
+    {
+      selectedAlertLevel = 3;
+    }
+    if (selectedAlertType == 0)
+    {
+      selectedAlertType = (emergencyContext > 0) ? getEmergencyAlertType(emergencyContext) : 3;
+    }
+  }
+
+  if (failSafeMode >= 1 && (selectedAlertLevel > 0 || staleInput == 1))
+  {
+    fallbackApplied = 1;
+    if (selectedAlertLevel < 4)
+    {
+      selectedAlertLevel = 4;
+    }
+    if (selectedAlertType == 0)
+    {
+      selectedAlertType = (emergencyContext > 0) ? getEmergencyAlertType(emergencyContext) : 3;
+    }
+  }
+
+  preAdjustAlertLevel = selectedAlertLevel;
+  preAdjustAlertType = selectedAlertType;
+
+  if (emergencyContext == 0 && objectWarningActive == 0 && selectedAlertLevel > 0)
+  {
+    if (turnLampState == 1)
+    {
+      selectedAlertType = 5;
+    }
+    else if (turnLampState == 2)
+    {
+      selectedAlertType = 6;
+    }
+  }
+
+  if (emergencyContext == 0 && selectedAlertLevel > 0)
+  {
+    if (sportMode == 1 || driveMode >= 4)
+    {
+      selectedAlertLevel = clampRange(selectedAlertLevel + 1, 0, 7);
+    }
+    else if (ecoMode == 1 && selectedAlertLevel > 1)
+    {
+      selectedAlertLevel = selectedAlertLevel - 1;
+    }
+  }
+
+  if (selectedAlertLevel > 0 &&
+      (driverSeatBelt == 0 || seatBeltWarnLvl >= 2))
+  {
+    if (selectedAlertLevel < 5)
+    {
+      selectedAlertLevel = 5;
+    }
+    if (selectedAlertType == 0)
+    {
+      selectedAlertType = 3;
+    }
+  }
+
+  if (selectedAlertLevel != preAdjustAlertLevel || selectedAlertType != preAdjustAlertType)
+  {
+    write("[ADAS] context adjust lvl=%d->%d type=%d->%d turn=%d mode=%d eco=%d sport=%d beltD=%d beltP=%d beltLvl=%d",
+          preAdjustAlertLevel, selectedAlertLevel,
+          preAdjustAlertType, selectedAlertType,
+          turnLampState, driveMode, ecoMode, sportMode,
+          driverSeatBelt, passengerSeatBelt, seatBeltWarnLvl);
+  }
+
+  if (manualAlertMode == 1)
+  {
+    staleInput = 0;
+    fallbackApplied = 0;
+    gStableAlertLevel = selectedAlertLevel;
+    gStableAlertType = selectedAlertType;
+    gLastStableAlertMs = nowMs;
+  }
+  else if (gStableAlertLevel < 0)
+  {
+    gStableAlertLevel = selectedAlertLevel;
+    gStableAlertType = selectedAlertType;
+    gLastStableAlertMs = nowMs;
+  }
+  else if (selectedAlertLevel != gStableAlertLevel || selectedAlertType != gStableAlertType)
+  {
+    if ((nowMs - gLastStableAlertMs) < 1000 &&
+        duplicatePopupGuard > 0 &&
+        selectedAlertType == gStableAlertType &&
+        selectedAlertLevel <= gStableAlertLevel)
+    {
+      selectedAlertLevel = gStableAlertLevel;
+      selectedAlertType = gStableAlertType;
+    }
+    else
+    {
+      gStableAlertLevel = selectedAlertLevel;
+      gStableAlertType = selectedAlertType;
+      gLastStableAlertMs = nowMs;
+    }
+  }
+
+  if (staleInput != gLastStaleInputState || fallbackApplied != gLastFallbackState)
+  {
+    write("[ADAS] robust stale=%d fallback=%d timeout=%d boundary=%d failSafe=%d lastRx=%d",
+          staleInput, fallbackApplied, timeoutClear, boundaryStatus, failSafeMode, (int)lastEmergencyRxMs);
+    gLastStaleInputState = staleInput;
+    gLastFallbackState = fallbackApplied;
+  }
+
+  @Core::decelAssistDecisionReq = decelDecisionReq;
+  @CoreState::driverReleaseReason = driverReleaseReason;
+  @CoreState::selectedAlertDecisionLevel = selectedAlertDecisionLevel;
+  @CoreState::selectedAlertDecisionType = selectedAlertDecisionType;
+  @Core::selectedAlertLevel = selectedAlertLevel;
+  @Core::selectedAlertType = selectedAlertType;
+  if (gLastAlertLevel != selectedAlertLevel || gLastAlertType != selectedAlertType)
+  {
+    @CoreState::arbitrationSnapshotId = ((int)@CoreState::arbitrationSnapshotId + 1) & 0xFFFF;
+    gLastAlertLevel = selectedAlertLevel;
+    gLastAlertType = selectedAlertType;
+  }
+  if (gLastDecelAssistReq != decelAssistReq ||
+      gLastReportedDriverReleaseReason != gLastDriverReleaseReason)
+  {
+    write("[ADAS] decel decision=%d effective=%d risk=%d failSafe=%d steer=%d brake=%d gate=%d objClass=%d objTtc=%d objConf=%d",
+          decelDecisionReq, decelAssistReq, proximityRiskLevel, failSafeMode,
+          steeringInput, brakePedal, gLastDriverReleaseReason,
+          objectRiskClass, objectTtcMin, objectConfidence);
+    gLastDecelAssistReq = decelAssistReq;
+    gLastReportedDriverReleaseReason = gLastDriverReleaseReason;
+  }
+
+  gPrevEmergencyContext = emergencyContext;
+
+  @Core::brakePedalNorm    = brakePedal;
+  @Core::accelPedalNorm    = accelPedal;
+  @CoreState::driveMode    = driveMode;
+  @CoreState::sportMode    = sportMode;
+}
+
+void updateWarningState()
+{
+  int manualMode;
+  int manualAlertOverride;
+  int manualAlertMode;
+  int manualRoadZone;
+  int manualNavDirection;
+  int speed;
+  int driveState;
+  int steeringInput;
+  int speedLimit;
+  int baseZoneContext;
+  int emergencyContext;
+  int etaSec;
+  int emergencyDirection;
+  int warningState;
+  int riskLevel;
+  int objectTrackValid;
+  int objectRange;
+  int objectRelSpeed;
+  int objectConfidence;
+  int objectRiskClass;
+  int objectRiskLevel;
+  int objectTtcMin;
+  int intersectionConflictFlag;
+  int mergeCutInFlag;
+  int objectAlertHoldMs;
+  int objectHoldActive;
+  int objectInputValid;
+  int accelGroupFlag;
+  int steerGroupFlag;
+  int accelGroupActive;
+  int steerGroupActive;
+  int directVehicleSpeedHint;
+  int directSpeedLimitHint;
+  int directBaseZoneContextHint;
+  dword nowMs;
+
+  if (ethIsRecentTick(gVehicleStateRxMs, 300) == 1)
+  {
+    speed = clampRange(gCanVehicleSpeed, 0, 255);
+    driveState = clampRange(gCanDriveState, 0, 3);
+  }
+  else
+  {
+    speed = clampRange((int)@Chassis::vehicleSpeed, 0, 255);
+    driveState = clampRange((int)@Chassis::driveState, 0, 3);
+  }
+  if (ethIsRecentTick(gSteeringStateRxMs, 300) == 1)
+  {
+    steeringInput = clampRange(gCanSteeringInput, 0, 1);
+  }
+  else
+  {
+    steeringInput = 0;
+  }
+  if (ethIsRecentTick(gNavStateRxMs, 300) == 1)
+  {
+    speedLimit = clampRange(gCanNavSpeedLimit, 0, 255);
+    baseZoneContext = deriveBaseZoneContextFromNavState(gCanNavRouteClass, gCanNavGuideType);
+  }
+  else
+  {
+    speedLimit = 30;
+    baseZoneContext = 0;
+  }
+  manualMode = (((int)@Test::scenarioActiveId) == 0) ? 1 : 0;
+  manualAlertOverride = clampRange((int)@Inject::manualAlertOverrideCmd, 0, 255);
+  manualAlertMode = (manualMode == 1 &&
+                     (manualAlertOverride > 0 ||
+                      ((int)@Inject::roadZone) > 0 ||
+                      ((int)@Inject::navDirection) > 0 ||
+                      ((int)@Inject::zoneDistance) > 0 ||
+                      ((int)@Inject::speedLimit) > 0 ||
+                      ((int)@Inject::emergencyActiveCmd) > 0)) ? 1 : 0;
+  directVehicleSpeedHint = clampRange((int)@Core::vehicleSpeedNorm, 0, 255);
+  directSpeedLimitHint = clampRange((int)@Core::speedLimitNorm, 0, 255);
+  directBaseZoneContextHint = clampRange((int)@Core::baseZoneContext, 0, 4);
+  if (manualAlertMode == 1)
+  {
+    manualRoadZone = clampRange((int)@Inject::roadZone, 0, 3);
+    manualNavDirection = clampRange((int)@Inject::navDirection, 0, 3);
+    speed = clampRange((int)@Chassis::vehicleSpeed, 0, 255);
+    driveState = clampRange((int)@Chassis::driveState, 0, 3);
+    speedLimit = clampRange((int)@Inject::speedLimit, 0, 255);
+    baseZoneContext = deriveBaseZoneContextFromNavState(manualRoadZone, manualNavDirection);
+    if (speed == 0 && directVehicleSpeedHint > 0)
+    {
+      speed = directVehicleSpeedHint;
+    }
+    if (speedLimit <= 0 && directSpeedLimitHint > 0)
+    {
+      speedLimit = directSpeedLimitHint;
+    }
+    if (baseZoneContext == 0 && directBaseZoneContextHint > 0)
+    {
+      baseZoneContext = directBaseZoneContextHint;
+    }
+    if (speedLimit <= 0)
+    {
+      speedLimit = 30;
+    }
+  }
+  emergencyContext = (int)@Core::emergencyContext;
+  accelGroupFlag = clampRange((int)@Core::accelGroupFlag, 0, 1);
+  steerGroupFlag = clampRange((int)@Core::steerGroupFlag, 0, 1);
+  etaSec = (int)@CoreState::emergencyIngressEtaSec;
+  emergencyDirection = (int)@CoreState::emergencyIngressDirection;
+  objectTrackValid = clampRange((int)@Core::objectTrackValid, 0, 1);
+  objectRange = clampRange((int)@Core::objectRange, 0, 500);
+  objectRelSpeed = clampRange((int)@Core::objectRelSpeed, -200, 200);
+  objectConfidence = clampRange((int)@Core::objectConfidence, 0, 100);
+  intersectionConflictFlag = clampRange((int)@Core::intersectionConflictFlag, 0, 1);
+  mergeCutInFlag = clampRange((int)@Core::mergeCutInFlag, 0, 1);
+  objectAlertHoldMs = clampRange((int)@Core::objectAlertHoldMs, 0, 5000);
+
+  if (objectAlertHoldMs == 0)
+  {
+    objectAlertHoldMs = 300;
+  }
+  if (emergencyContext < 0 || emergencyContext > 2)
+  {
+    emergencyContext = 0;
+  }
+  etaSec = clampRange(etaSec, 0, 255);
+  emergencyDirection = clampRange(emergencyDirection, 0, 3);
+  if (speed < 0)
+  {
+    speed = 0;
+  }
+  if (speed > 255)
+  {
+    speed = 255;
+  }
+  if (driveState < 0 || driveState > 3)
+  {
+    driveState = 0;
+  }
+  if (steeringInput < 0 || steeringInput > 1)
+  {
+    steeringInput = 0;
+  }
+  if (speedLimit <= 0 || speedLimit > 255)
+  {
+    speedLimit = 30;
+  }
+  if (baseZoneContext < 0 || baseZoneContext > 4)
+  {
+    baseZoneContext = 0;
+  }
+
+  nowMs = getSimulationTimeMs();
+  objectHoldActive = 0;
+  objectInputValid = 0;
+
+  if (objectTrackValid == 1 &&
+      objectConfidence >= 25 &&
+      objectRange > 0 &&
+      objectRange <= 500)
+  {
+    objectInputValid = 1;
+  }
+
+  if (objectInputValid == 0)
+  {
+    objectTrackValid = 0;
+  }
+
+  if (objectTrackValid == 1)
+  {
+    gLastObjectTrackRxMs = nowMs;
+  }
+  else if (gLastObjectTrackRxMs != 0 &&
+           (nowMs - gLastObjectTrackRxMs) <= (dword)objectAlertHoldMs &&
+           gLastObjectRiskClass >= 2)
+  {
+    objectTrackValid = 1;
+    objectHoldActive = 1;
+  }
+
+  if (objectTrackValid == 1 && objectConfidence >= 20)
+  {
+    objectTtcMin = calcObjectTtcMs(objectRange, objectRelSpeed);
+    objectRiskLevel = calcObjectRisk(objectTtcMin, objectConfidence, objectRange,
+                                     intersectionConflictFlag, mergeCutInFlag);
+  }
+  else
+  {
+    objectTtcMin = 10000;
+    objectRiskLevel = 0;
+  }
+
+  objectRiskClass = calcObjectRiskClass(objectTrackValid, objectConfidence, objectRiskLevel);
+  if (objectHoldActive == 1 && objectRiskClass >= 2 && objectRiskClass < 3)
+  {
+    objectRiskClass = 3;
+  }
+
+  if (objectInputValid != gLastInputFilterState)
+  {
+    write("[ADAS] input filter valid=%d track=%d conf=%d range=%d rel=%d",
+          objectInputValid, objectTrackValid, objectConfidence, objectRange, objectRelSpeed);
+    gLastInputFilterState = objectInputValid;
+  }
+
+  if (objectRiskClass != gLastObjectRiskClass)
+  {
+    if (objectRiskClass >= 2 && gLastObjectRiskClass < 2)
+    {
+      @Core::objectEventCode = 1381;
+    }
+    else if (objectRiskClass < 2 && gLastObjectRiskClass >= 2)
+    {
+      @Core::objectEventCode = 1382;
+    }
+    else if (objectRiskClass >= 2)
+    {
+      @Core::objectEventCode = 1383;
+    }
+    else
+    {
+      @Core::objectEventCode = 0;
+    }
+    gLastObjectRiskClass = objectRiskClass;
+  }
+
+  @Core::objectTrackValid = objectTrackValid;
+  @Core::objectRange = objectRange;
+  @Core::objectRelSpeed = objectRelSpeed;
+  @Core::objectConfidence = objectConfidence;
+  @Core::objectRiskClass = objectRiskClass;
+  @Core::objectTtcMin = objectTtcMin;
+  @Core::intersectionConflictFlag = intersectionConflictFlag;
+  @Core::mergeCutInFlag = mergeCutInFlag;
+  @Core::objectAlertHoldMs = objectAlertHoldMs;
+  gLastObjectRiskLevel = objectRiskLevel;
+  if (objectRiskClass >= 2)
+  {
+    gLastObjectAlertLevel = getObjectAlertLevel(intersectionConflictFlag, mergeCutInFlag, objectRiskClass);
+    gLastObjectAlertType = getObjectAlertType(intersectionConflictFlag, mergeCutInFlag);
+  }
+  else
+  {
+    gLastObjectAlertLevel = 0;
+    gLastObjectAlertType = 0;
+  }
+
+  riskLevel = calcProximityRisk(emergencyContext, etaSec, speed, emergencyDirection, driveState);
+  if (objectRiskLevel > riskLevel)
+  {
+    riskLevel = objectRiskLevel;
+  }
+  @Core::proximityRiskLevel = riskLevel;
+  warningState = 0;
+
+  if (driveState == 3)
+  {
+    if (baseZoneContext == 1 && speed > speedLimit)
+    {
+      warningState = 1;
+    }
+    else if (baseZoneContext == 2 && speed >= 60 && steeringInput == 0)
+    {
+      if (gHighwayNoSteerStartMs == 0)
+      {
+        gHighwayNoSteerStartMs = nowMs;
+      }
+      if ((nowMs - gHighwayNoSteerStartMs) >= 10000)
+      {
+        warningState = 2;
+      }
+    }
+    else
+    {
+      /* Alert Priority timer freeze: do not reset highway timer during active emergency (Req_033).
+         Prevents steeringInput glitches during emergency from invalidating the 10s count. */
+      if (emergencyContext == 0)
+      {
+        gHighwayNoSteerStartMs = 0;
+      }
+    }
+  }
+  else
+  {
+    if (emergencyContext == 0)
+    {
+      gHighwayNoSteerStartMs = 0;
+    }
+  }
+
+  /* A/B 그룹 거동 감지 (입력층 Rule-Based 판단)
+     A-group (accelGroupFlag): 급가속 또는 급제동 감지
+     B-group (steerGroupFlag): 차선이탈 또는 급차선변경 감지
+     판단 규칙: A단독 or B단독 → warningState 최소 1 (경미 경고)
+                A+B 복합       → warningState 최소 2 (중간 경고)
+     Emergency 활성 중에는 hold 타이머를 갱신하지 않아 긴급 해제 후 자연 복귀.
+     IC/유도구간(zone 3/4)에서는 앰비언트 방향 안내 우선이므로 적용 제외. */
+  if (emergencyContext == 0)
+  {
+    if (accelGroupFlag == 1)
+    {
+      gAccelGroupHoldEndMs = nowMs + 2000;
+    }
+    if (steerGroupFlag == 1)
+    {
+      gSteerGroupHoldEndMs = nowMs + 2000;
+    }
+  }
+  accelGroupActive = (accelGroupFlag == 1 || (emergencyContext == 0 && nowMs < gAccelGroupHoldEndMs)) ? 1 : 0;
+  steerGroupActive = (steerGroupFlag == 1 || (emergencyContext == 0 && nowMs < gSteerGroupHoldEndMs)) ? 1 : 0;
+
+  if (driveState == 3 && baseZoneContext != 3 && baseZoneContext != 4)
+  {
+    if (accelGroupActive == 1 && steerGroupActive == 1)
+    {
+      if (warningState < 2)
+      {
+        warningState = 2;
+      }
+    }
+    else if (accelGroupActive == 1 || steerGroupActive == 1)
+    {
+      if (warningState < 1)
+      {
+        warningState = 1;
+      }
+    }
+  }
+
+  if (accelGroupActive != gLastAccelGroupActive || steerGroupActive != gLastSteerGroupActive)
+  {
+    write("[ADAS] AB-group accel=%d steer=%d warningState=%d zone=%d",
+          accelGroupActive, steerGroupActive, warningState, baseZoneContext);
+    gLastAccelGroupActive = accelGroupActive;
+    gLastSteerGroupActive = steerGroupActive;
+  }
+
+  if (warningState == 0 && objectRiskClass >= 3)
+  {
+    warningState = 2;
+  }
+
+  @Diag::AdasHealthLevel = (warningState > 0) ? 1 : 0;
+  if (warningState != gLastWarningState)
+  {
+    message frmAdasChassisStatusMsg mAdas;
+
+    @Core::warningState = warningState;
+    mAdas.AdasChassisState = warningState;
+    mAdas.AdasHealthLevel = (warningState > 0) ? 1 : 0;
+    output(mAdas);
+    gLastWarningState = warningState;
+  }
+
+  if (riskLevel != gLastRiskLevel)
+  {
+    gLastRiskLevel = riskLevel;
+  }
+
+  if ((int)@Core::objectEventCode != gLastObjectEventCode)
+  {
+    write("[ADAS] objectEvent=%d riskClass=%d ttcMs=%d conf=%d hold=%d",
+          (int)@Core::objectEventCode, objectRiskClass, objectTtcMin,
+          objectConfidence, objectHoldActive);
+    gLastObjectEventCode = (int)@Core::objectEventCode;
+  }
+
+  @Core::vehicleSpeedNorm  = speed;
+  @Core::driveStateNorm    = driveState;
+  @Core::steeringInputNorm = steeringInput;
+  @Core::speedLimitNorm    = speedLimit;
+  @Core::baseZoneContext   = baseZoneContext;
+}
+
+void applyObjectRiskInput(int trackValid,
+                          int rangeM,
+                          int relSpeedKph,
+                          int confidence,
+                          int intersectionConflict,
+                          int mergeCutIn,
+                          int alertHoldMs)
+{
+  if (alertHoldMs == 0)
+  {
+    alertHoldMs = 300;
+  }
+
+  @Core::objectTrackValid = trackValid;
+  @Core::objectRange = rangeM;
+  @Core::objectRelSpeed = relSpeedKph;
+  @Core::objectConfidence = confidence;
+  @Core::intersectionConflictFlag = intersectionConflict;
+  @Core::mergeCutInFlag = mergeCutIn;
+  @Core::objectAlertHoldMs = alertHoldMs;
+  if (trackValid == 1)
+  {
+    gLastObjectTrackRxMs = getSimulationTimeMs();
+  }
+}
+
+void logObjectRiskAccepted(dword address, dword port)
+{
+  if (address != gLastAcceptedObjectSrcIp || port != gLastAcceptedObjectSrcPort)
+  {
+    write("[ADAS] object ingress accept src=%lu port=%lu", address, port);
+    gLastAcceptedObjectSrcIp = address;
+    gLastAcceptedObjectSrcPort = port;
+  }
+}
+
+void logObjectRiskRejected(dword address, dword port)
+{
+  if (address != gLastRejectedObjectSrcIp || port != gLastRejectedObjectSrcPort)
+  {
+    write("[ADAS] object ingress unexpected src=%lu port=%lu", address, port);
+    gLastRejectedObjectSrcIp = address;
+    gLastRejectedObjectSrcPort = port;
+  }
+}
+
+void OnUdpReceiveFrom(dword socket, long result, dword address, dword port, char buffer[], dword count)
+{
+  int msgId;
+
+  if (socket != gEthSocket)
+  {
+    return;
+  }
+  if (result == 0)
+  {
+    msgId = ethFrameMsgId(buffer, count);
+    if (msgId == ethMsgObjectRiskInput() && ethFramePayloadLen(count) >= 8)
+    {
+      if (ethMatchesSource(address, ethNodeIpTestScn(), port, ethTestScnTxPort()) == 0)
+      {
+        logObjectRiskRejected(address, port);
+      }
+      else
+      {
+        logObjectRiskAccepted(address, port);
+      }
+      applyObjectRiskInput(ethGetU8(buffer, 0) & 0x1,
+                           clampRange(ethGetU16Le(buffer, 1), 0, 500),
+                           clampRange(ethGetS16Le(buffer, 3), -200, 200),
+                           clampRange(ethGetU8(buffer, 5), 0, 100),
+                           (ethGetU8(buffer, 0) >> 1) & 0x1,
+                           (ethGetU8(buffer, 0) >> 2) & 0x1,
+                           clampRange(ethGetU16Le(buffer, 6), 0, 5000));
+    }
+  }
+
+  ethArmReceive(gEthSocket, gEthRxBuffer, elcount(gEthRxBuffer));
+}
+
+on message frmVehicleStateCanMsg
+{
+  gCanVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gCanDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleStateRxMs = getSimulationTimeMs();
+}
+
+on message frmSteeringStateCanMsg
+{
+  gCanSteeringInput = clampRange((int)this.SteeringState, 0, 1);
+  gSteeringStateRxMs = getSimulationTimeMs();
+}
+
+on message frmBrakeStatusMsg
+{
+  gCanBrakePressure = clampRange((int)this.BrakePressure, 0, 255);
+  gCanBrakeMode = clampRange((int)this.BrakeMode, 0, 3);
+  gBrakeStatusRxMs = getSimulationTimeMs();
+}
+
+on message frmPedalInputCanMsg
+{
+  gCanAccelPedal = clampRange((int)this.AccelPedal, 0, 100);
+  gPedalInputRxMs = getSimulationTimeMs();
+}
+
+on message frmNavModuleStateMsg
+{
+  gCanNavRouteClass = clampRange((int)this.NavRouteClass, 0, 3);
+  gCanNavGuideType = clampRange((int)this.NavGuideType, 0, 3);
+  gCanNavSpeedLimit = clampRange((int)this.NavSpeedLimit, 0, 255);
+  gNavStateRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleModeMsg
+{
+  gCanDriveMode = clampRange((int)this.DriveMode, 0, 7);
+  gCanEcoMode = clampRange((int)this.EcoMode, 0, 1);
+  gCanSportMode = clampRange((int)this.SportMode, 0, 1);
+  gVehicleModeRxMs = getSimulationTimeMs();
+}
+
+on message frmLampControlMsg
+{
+  gCanTurnLampState = clampRange((int)this.TurnLampState, 0, 3);
+  gLampControlRxMs = getSimulationTimeMs();
+}
+
+on message frmSeatBeltStateMsg
+{
+  gCanDriverSeatBelt = clampRange((int)this.DriverSeatBelt, 0, 1);
+  gCanPassengerSeatBelt = clampRange((int)this.PassengerSeatBelt, 0, 1);
+  gCanSeatBeltWarnLvl = clampRange((int)this.SeatBeltWarnLvl, 0, 3);
+  gSeatBeltRxMs = getSimulationTimeMs();
+}
+
+on start
+{
+  gEthSocket = ethOpenBackboneReceiverSocket(getAdasLocalIp());
+  gEthTxSocket = ethOpenPreferredNodeSocket(getAdasLocalIp(), getAdasTxPort());
+  gEthTargetIp = ethGetDefaultIpAddress();
+  gLastWarningState = -1;
+  gHighwayNoSteerStartMs = 0;
+  gLastRiskLevel = -1;
+  gRiskPublishTick = 0;
+  gObjectStatePublishTick = 0;
+  gLastObjectTrackRxMs = 0;
+  gLastObjectRiskClass = 0;
+  gLastObjectEventCode = -1;
+  gLastInputFilterState = -1;
+  gLastAlertLevel = -1;
+  gLastAlertType = -1;
+  gLastDecelAssistReq = -1;
+  gLastDriverReleaseReason = 0;
+  gLastReportedDriverReleaseReason = -1;
+  gPrevEmergencyContext = 0;
+  gLastStableAlertMs = 0;
+  gStableAlertLevel = -1;
+  gStableAlertType = -1;
+  gLastStaleInputState = -1;
+  gLastFallbackState = -1;
+  gLastObjectRiskLevel = 0;
+  gLastObjectAlertLevel = 0;
+  gLastObjectAlertType = 0;
+  gAccelGroupHoldEndMs = 0;
+  gSteerGroupHoldEndMs = 0;
+  gLastAccelGroupActive = 0;
+  gLastSteerGroupActive = 0;
+  gCanVehicleSpeed = 0;
+  gCanDriveState = 0;
+  gCanSteeringInput = 0;
+  gCanBrakePressure = 0;
+  gCanBrakeMode = 0;
+  gCanAccelPedal = 0;
+  gCanNavRouteClass = 0;
+  gCanNavGuideType = 0;
+  gCanNavSpeedLimit = 0;
+  gCanDriveMode = 0;
+  gCanEcoMode = 0;
+  gCanSportMode = 0;
+  gCanTurnLampState = 0;
+  gCanDriverSeatBelt = 0;
+  gCanPassengerSeatBelt = 0;
+  gCanSeatBeltWarnLvl = 0;
+  gVehicleStateRxMs = 0;
+  gSteeringStateRxMs = 0;
+  gBrakeStatusRxMs = 0;
+  gPedalInputRxMs = 0;
+  gNavStateRxMs = 0;
+  gVehicleModeRxMs = 0;
+  gLampControlRxMs = 0;
+  gSeatBeltRxMs = 0;
+  gLastAcceptedObjectSrcIp = 0;
+  gLastAcceptedObjectSrcPort = 0;
+  gLastRejectedObjectSrcIp = 0;
+  gLastRejectedObjectSrcPort = 0;
+  @Core::accelGroupFlag = 0;
+  @Core::steerGroupFlag = 0;
+  @Core::proximityRiskLevel = 0;
+  @Core::accelPedalNorm = 0;
+  @Core::objectTrackValid = 0;
+  @Core::objectRange = 0;
+  @Core::objectRelSpeed = 0;
+  @Core::objectConfidence = 0;
+  @Core::objectRiskClass = 0;
+  @Core::objectTtcMin = 10000;
+  @Core::intersectionConflictFlag = 0;
+  @Core::mergeCutInFlag = 0;
+  @Core::objectAlertHoldMs = 300;
+  @Core::objectEventCode = 0;
+  @Core::decelAssistDecisionReq = 0;
+  @Core::decelAssistReq = 0;
+  @CoreState::driverReleaseReason = 0;
+  @CoreState::decelGateReason = 0;
+  if (gEthTxSocket == ethInvalidSocket())
+  {
+    write("[ADAS] tx socket unavailable");
+  }
+  if (gEthSocket != ethInvalidSocket())
+  {
+    ethStartReceiver(gEthSocket, gEthRxBuffer, elcount(gEthRxBuffer));
+  }
+  setTimer(tAdasCycle, 10);
+  setTimer(tArbiter50, 50);
+  write("[ADAS] start");
+}
+
+on timer tAdasCycle
+{
+  updateWarningState();
+  setTimer(tAdasCycle, 10);
+}
+
+on timer tArbiter50
+{
+  runArbiter();
+  publishBackboneDecisionFrames();
+  setTimer(tArbiter50, 50);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tAdasCycle);
+  cancelTimer(tArbiter50);
+  ethCloseSocket(gEthTxSocket);
+  gEthTxSocket = ethInvalidSocket();
+  ethCloseSocket(gEthSocket);
+  gEthSocket = ethInvalidSocket();
+}

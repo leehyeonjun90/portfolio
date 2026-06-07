@@ -1,0 +1,259 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tParkMasterCycle;
+  int gSpasActive;
+  int gSpasStage;
+  int gRspaReady;
+  int gAvmActive;
+  int gViewMode;
+  int gParkAssistActive;
+  int gMinDistanceCm;
+  dword gSpasRxMs;
+  dword gRspaRxMs;
+  dword gAvmRxMs;
+  dword gParkAssistRxMs;
+  int gLastSpasInputStale;
+  int gLastRspaInputStale;
+  int gLastAvmInputStale;
+  int gLastParkAssistInputStale;
+  int gLastActive;
+  int gLastReady;
+  int gLastPhase;
+  int gLastViewMode;
+  int gLastDistance;
+}
+
+void tracePkmInputHealth(int spasInputStale, int rspaInputStale,
+                         int avmInputStale, int parkAssistInputStale)
+{
+  if (spasInputStale != gLastSpasInputStale)
+  {
+    if (spasInputStale == 1)
+    {
+      write("[PKM] spas input stale");
+    }
+    else
+    {
+      write("[PKM] spas input restored");
+    }
+    gLastSpasInputStale = spasInputStale;
+  }
+
+  if (rspaInputStale != gLastRspaInputStale)
+  {
+    if (rspaInputStale == 1)
+    {
+      write("[PKM] rspa input stale");
+    }
+    else
+    {
+      write("[PKM] rspa input restored");
+    }
+    gLastRspaInputStale = rspaInputStale;
+  }
+
+  if (avmInputStale != gLastAvmInputStale)
+  {
+    if (avmInputStale == 1)
+    {
+      write("[PKM] avm input stale");
+    }
+    else
+    {
+      write("[PKM] avm input restored");
+    }
+    gLastAvmInputStale = avmInputStale;
+  }
+
+  if (parkAssistInputStale != gLastParkAssistInputStale)
+  {
+    if (parkAssistInputStale == 1)
+    {
+      write("[PKM] park-ultrasonic input stale");
+    }
+    else
+    {
+      write("[PKM] park-ultrasonic input restored");
+    }
+    gLastParkAssistInputStale = parkAssistInputStale;
+  }
+}
+
+void publishParkMasterState()
+{
+  message frmParkMasterStateMsg mParkMaster;
+  int spasInputStale;
+  int rspaInputStale;
+  int avmInputStale;
+  int parkAssistInputStale;
+  int spasActive;
+  int spasStage;
+  int rspaReady;
+  int avmActive;
+  int viewMode;
+  int parkAssistActive;
+  int minDistanceCm;
+  int parkMasterActive;
+  int autoManeuverReady;
+  int parkPhase;
+  int surroundHealth;
+
+  spasInputStale = (ethIsRecentTick(gSpasRxMs, 300) == 1) ? 0 : 1;
+  rspaInputStale = (ethIsRecentTick(gRspaRxMs, 300) == 1) ? 0 : 1;
+  avmInputStale = (ethIsRecentTick(gAvmRxMs, 300) == 1) ? 0 : 1;
+  parkAssistInputStale = (ethIsRecentTick(gParkAssistRxMs, 300) == 1) ? 0 : 1;
+  tracePkmInputHealth(spasInputStale, rspaInputStale, avmInputStale, parkAssistInputStale);
+
+  spasActive = gSpasActive;
+  spasStage = gSpasStage;
+  rspaReady = gRspaReady;
+  avmActive = gAvmActive;
+  viewMode = gViewMode;
+  parkAssistActive = gParkAssistActive;
+  minDistanceCm = gMinDistanceCm;
+  if (spasInputStale == 1)
+  {
+    spasActive = 0;
+    spasStage = 0;
+  }
+  if (rspaInputStale == 1)
+  {
+    rspaReady = 0;
+  }
+  if (avmInputStale == 1)
+  {
+    avmActive = 0;
+    viewMode = 0;
+  }
+  if (parkAssistInputStale == 1)
+  {
+    parkAssistActive = 0;
+    minDistanceCm = 255;
+  }
+
+  parkMasterActive = (spasActive == 1 || rspaReady == 1 || avmActive == 1 || parkAssistActive == 1) ? 1 : 0;
+  autoManeuverReady = (spasActive == 1 || rspaReady == 1) ? 1 : 0;
+
+  parkPhase = 0;
+  if (rspaReady == 1)
+  {
+    parkPhase = 3;
+  }
+  else if (spasActive == 1)
+  {
+    parkPhase = clampRange(spasStage, 0, 3);
+  }
+  else if (parkAssistActive == 1)
+  {
+    parkPhase = 1;
+  }
+
+  surroundHealth = 0;
+  if (avmActive == 1)
+  {
+    surroundHealth = 2;
+  }
+  else if (parkAssistActive == 1)
+  {
+    surroundHealth = 1;
+  }
+
+  mParkMaster.ParkMasterActive = parkMasterActive;
+  mParkMaster.AutoManeuverReady = autoManeuverReady;
+  mParkMaster.ParkPhase = clampRange(parkPhase, 0, 3);
+  mParkMaster.ViewMode = clampRange(viewMode, 0, 7);
+  mParkMaster.MinDistanceCm = clampRange(minDistanceCm, 0, 255);
+  mParkMaster.AssistStage = clampRange(spasStage, 0, 3);
+  mParkMaster.SurroundHealth = clampRange(surroundHealth, 0, 3);
+  output(mParkMaster);
+
+  if (parkMasterActive != gLastActive ||
+      autoManeuverReady != gLastReady ||
+      parkPhase != gLastPhase ||
+      viewMode != gLastViewMode ||
+      minDistanceCm != gLastDistance)
+  {
+    write("[PKM] active=%d ready=%d phase=%d view=%d dist=%d spas=%d rspa=%d",
+          parkMasterActive,
+          autoManeuverReady,
+          parkPhase,
+          viewMode,
+          minDistanceCm,
+          spasActive,
+          rspaReady);
+    gLastActive = parkMasterActive;
+    gLastReady = autoManeuverReady;
+    gLastPhase = parkPhase;
+    gLastViewMode = viewMode;
+    gLastDistance = minDistanceCm;
+  }
+}
+
+on start
+{
+  gSpasActive = 0;
+  gSpasStage = 0;
+  gRspaReady = 0;
+  gAvmActive = 0;
+  gViewMode = 0;
+  gParkAssistActive = 0;
+  gMinDistanceCm = 255;
+  gSpasRxMs = 0;
+  gRspaRxMs = 0;
+  gAvmRxMs = 0;
+  gParkAssistRxMs = 0;
+  gLastSpasInputStale = 0;
+  gLastRspaInputStale = 0;
+  gLastAvmInputStale = 0;
+  gLastParkAssistInputStale = 0;
+  gLastActive = -1;
+  gLastReady = -1;
+  gLastPhase = -1;
+  gLastViewMode = -1;
+  gLastDistance = -1;
+  setTimer(tParkMasterCycle, 100);
+  write("[PKM] start");
+}
+
+on timer tParkMasterCycle
+{
+  publishParkMasterState();
+  setTimer(tParkMasterCycle, 100);
+}
+
+on message frmSpasStateMsg
+{
+  gSpasActive = clampRange((int)this.SpasActive, 0, 1);
+  gSpasStage = clampRange((int)this.SpasStage, 0, 3);
+  gSpasRxMs = getSimulationTimeMs();
+}
+
+on message frmRspaStateMsg
+{
+  gRspaReady = clampRange((int)this.RspaReady, 0, 1);
+  gRspaRxMs = getSimulationTimeMs();
+}
+
+on message frmAvmStateMsg
+{
+  gAvmActive = clampRange((int)this.AvmActive, 0, 1);
+  gViewMode = clampRange((int)this.ViewMode, 0, 7);
+  gAvmRxMs = getSimulationTimeMs();
+}
+
+on message frmParkUltrasonicStateMsg
+{
+  gParkAssistActive = clampRange((int)this.ParkAssistActive, 0, 1);
+  gMinDistanceCm = clampRange((int)this.MinDistanceCm, 0, 255);
+  gParkAssistRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tParkMasterCycle);
+}

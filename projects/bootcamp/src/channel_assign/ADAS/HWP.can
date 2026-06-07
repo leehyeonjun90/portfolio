@@ -1,0 +1,249 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tHighwayPilotCycle;
+  int gCruiseState;
+  int gSetSpeed;
+  int gLaneGuideState;
+  int gDmsActive;
+  int gAttentionLevel;
+  int gNavRouteClass;
+  dword gCruiseRxMs;
+  dword gLaneGuideRxMs;
+  dword gDmsRxMs;
+  dword gNavRxMs;
+  int gLastCruiseInputStale;
+  int gLastLaneGuideInputStale;
+  int gLastDmsInputStale;
+  int gLastNavInputStale;
+  int gLastReady;
+  int gLastLongCtrl;
+  int gLastLatCtrl;
+  int gLastDriverReq;
+  int gLastAvail;
+}
+
+void traceHwpInputHealth(int cruiseInputStale,
+                         int laneGuideInputStale,
+                         int dmsInputStale,
+                         int navInputStale)
+{
+  if (cruiseInputStale != gLastCruiseInputStale)
+  {
+    if (cruiseInputStale == 1)
+    {
+      write("[HWP] cruise input stale");
+    }
+    else
+    {
+      write("[HWP] cruise input restored");
+    }
+    gLastCruiseInputStale = cruiseInputStale;
+  }
+
+  if (laneGuideInputStale != gLastLaneGuideInputStale)
+  {
+    if (laneGuideInputStale == 1)
+    {
+      write("[HWP] lane-guide input stale");
+    }
+    else
+    {
+      write("[HWP] lane-guide input restored");
+    }
+    gLastLaneGuideInputStale = laneGuideInputStale;
+  }
+
+  if (dmsInputStale != gLastDmsInputStale)
+  {
+    if (dmsInputStale == 1)
+    {
+      write("[HWP] dms input stale");
+    }
+    else
+    {
+      write("[HWP] dms input restored");
+    }
+    gLastDmsInputStale = dmsInputStale;
+  }
+
+  if (navInputStale != gLastNavInputStale)
+  {
+    if (navInputStale == 1)
+    {
+      write("[HWP] nav input stale");
+    }
+    else
+    {
+      write("[HWP] nav input restored");
+    }
+    gLastNavInputStale = navInputStale;
+  }
+}
+
+void publishHighwayPilotState()
+{
+  message frmHighwayPilotStateMsg mHp;
+  int cruiseInputStale;
+  int laneGuideInputStale;
+  int dmsInputStale;
+  int navInputStale;
+  int cruiseState;
+  int setSpeed;
+  int laneGuideState;
+  int dmsActive;
+  int attentionLevel;
+  int navRouteClass;
+  int highwayReady;
+  int longCtrlActive;
+  int latCtrlActive;
+  int driverMonitorReq;
+  int availabilityLevel;
+
+  cruiseInputStale = (ethIsRecentTick(gCruiseRxMs, 300) == 1) ? 0 : 1;
+  laneGuideInputStale = (ethIsRecentTick(gLaneGuideRxMs, 300) == 1) ? 0 : 1;
+  dmsInputStale = (ethIsRecentTick(gDmsRxMs, 300) == 1) ? 0 : 1;
+  navInputStale = (ethIsRecentTick(gNavRxMs, 300) == 1) ? 0 : 1;
+  traceHwpInputHealth(cruiseInputStale, laneGuideInputStale, dmsInputStale, navInputStale);
+
+  cruiseState = gCruiseState;
+  setSpeed = gSetSpeed;
+  laneGuideState = gLaneGuideState;
+  dmsActive = gDmsActive;
+  attentionLevel = gAttentionLevel;
+  navRouteClass = gNavRouteClass;
+  if (cruiseInputStale == 1)
+  {
+    cruiseState = 0;
+    setSpeed = 0;
+  }
+  if (laneGuideInputStale == 1)
+  {
+    laneGuideState = 0;
+  }
+  if (dmsInputStale == 1)
+  {
+    dmsActive = 1;
+    attentionLevel = 3;
+  }
+  if (navInputStale == 1)
+  {
+    navRouteClass = 0;
+  }
+
+  highwayReady = (navRouteClass == 2 && cruiseState >= 1 && attentionLevel <= 2) ? 1 : 0;
+  longCtrlActive = (highwayReady == 1 && cruiseState == 2) ? 1 : 0;
+  latCtrlActive = (highwayReady == 1 && laneGuideState >= 2) ? 1 : 0;
+  driverMonitorReq = (dmsActive == 1 && attentionLevel >= 2) ? 1 : 0;
+
+  availabilityLevel = 0;
+  if (highwayReady == 1)
+  {
+    availabilityLevel = 1;
+  }
+  if (longCtrlActive == 1 && latCtrlActive == 1)
+  {
+    availabilityLevel = 2;
+  }
+  if (driverMonitorReq == 1)
+  {
+    availabilityLevel = 1;
+  }
+
+  mHp.HighwayPilotReady = highwayReady;
+  mHp.LongCtrlActive = longCtrlActive;
+  mHp.LatCtrlActive = latCtrlActive;
+  mHp.DriverMonitorReq = driverMonitorReq;
+  mHp.AvailabilityLevel = clampRange(availabilityLevel, 0, 3);
+  mHp.SetSpeed = clampRange(setSpeed, 0, 255);
+  mHp.LaneGuideState = clampRange(laneGuideState, 0, 3);
+  mHp.CruiseState = clampRange(cruiseState, 0, 3);
+  output(mHp);
+
+  if (highwayReady != gLastReady ||
+      longCtrlActive != gLastLongCtrl ||
+      latCtrlActive != gLastLatCtrl ||
+      driverMonitorReq != gLastDriverReq ||
+      availabilityLevel != gLastAvail)
+  {
+    write("[HWP] ready=%d long=%d lat=%d dmsReq=%d avail=%d setSpeed=%d lane=%d",
+          highwayReady,
+          longCtrlActive,
+          latCtrlActive,
+          driverMonitorReq,
+          availabilityLevel,
+          setSpeed,
+          laneGuideState);
+    gLastReady = highwayReady;
+    gLastLongCtrl = longCtrlActive;
+    gLastLatCtrl = latCtrlActive;
+    gLastDriverReq = driverMonitorReq;
+    gLastAvail = availabilityLevel;
+  }
+}
+
+on start
+{
+  gCruiseState = 0;
+  gSetSpeed = 0;
+  gLaneGuideState = 0;
+  gDmsActive = 0;
+  gAttentionLevel = 1;
+  gNavRouteClass = 0;
+  gCruiseRxMs = 0;
+  gLaneGuideRxMs = 0;
+  gDmsRxMs = 0;
+  gNavRxMs = 0;
+  gLastCruiseInputStale = 0;
+  gLastLaneGuideInputStale = 0;
+  gLastDmsInputStale = 0;
+  gLastNavInputStale = 0;
+  gLastReady = -1;
+  gLastLongCtrl = -1;
+  gLastLatCtrl = -1;
+  gLastDriverReq = -1;
+  gLastAvail = -1;
+  setTimer(tHighwayPilotCycle, 100);
+  write("[HWP] start");
+}
+
+on timer tHighwayPilotCycle
+{
+  publishHighwayPilotState();
+  setTimer(tHighwayPilotCycle, 100);
+}
+
+on message frmCruiseStateMsg
+{
+  gCruiseState = clampRange((int)this.CruiseState, 0, 3);
+  gSetSpeed = clampRange((int)this.CruiseSetSpeed, 0, 255);
+  gCruiseRxMs = getSimulationTimeMs();
+}
+
+on message frmLdwsLkasStateMsg
+{
+  gLaneGuideState = clampRange((int)this.LaneGuideState, 0, 3);
+  gLaneGuideRxMs = getSimulationTimeMs();
+}
+
+on message frmDmsStateMsg
+{
+  gDmsActive = clampRange((int)this.DriverMonitorActive, 0, 1);
+  gAttentionLevel = clampRange((int)this.AttentionLevel, 0, 3);
+  gDmsRxMs = getSimulationTimeMs();
+}
+
+on message frmNavModuleStateMsg
+{
+  gNavRouteClass = clampRange((int)this.NavRouteClass, 0, 3);
+  gNavRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tHighwayPilotCycle);
+}

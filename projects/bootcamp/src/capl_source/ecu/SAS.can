@@ -1,0 +1,154 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tSasCycle;
+  int gSteeringInput;
+  int gVehicleSpeed;
+  dword gSteeringRxMs;
+  dword gVehicleStateRxMs;
+  int gLastSteeringInputStale;
+  int gLastVehicleInputStale;
+  int gLastAngle;
+}
+
+int deriveManualSteeringInputFromAngle(int steeringAngle)
+{
+  steeringAngle = clampRange(steeringAngle, 0, 138);
+  if (steeringAngle <= 54 || steeringAngle >= 84)
+  {
+    return 1;
+  }
+  return 0;
+}
+
+void traceSasInputHealth(int steeringInputStale, int vehicleInputStale)
+{
+  if (steeringInputStale != gLastSteeringInputStale)
+  {
+    if (steeringInputStale == 1)
+    {
+      write("[SAS] steering input stale");
+    }
+    else
+    {
+      write("[SAS] steering input restored");
+    }
+    gLastSteeringInputStale = steeringInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[SAS] vehicle-state input stale");
+    }
+    else
+    {
+      write("[SAS] vehicle-state input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+void publishSasState()
+{
+  message frmSteeringAngleMsg mSas;
+  int steeringInputStale;
+  int vehicleInputStale;
+  int steeringInput;
+  int manualMode;
+  int vehicleSpeed;
+  int steeringAngleRaw;
+
+  steeringInputStale = (ethIsRecentTick(gSteeringRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleStateRxMs, 300) == 1) ? 0 : 1;
+  traceSasInputHealth(steeringInputStale, vehicleInputStale);
+
+  steeringInput = gSteeringInput;
+  vehicleSpeed = gVehicleSpeed;
+  manualMode = (((int)@Test::scenarioActiveId) == 0) ? 1 : 0;
+  if (steeringInputStale == 1)
+  {
+    steeringInput = 0;
+  }
+  if (vehicleInputStale == 1)
+  {
+    vehicleSpeed = 0;
+  }
+
+  if (manualMode == 1)
+  {
+    steeringInput = deriveManualSteeringInputFromAngle((int)@Chassis::steeringAngle);
+    vehicleSpeed = clampRange((int)@Chassis::vehicleSpeed, 0, 255);
+  }
+
+  steeringAngleRaw = 0;
+  if (steeringInput > 0)
+  {
+    if (vehicleSpeed >= 60)
+    {
+      steeringAngleRaw = 1400;
+    }
+    else if (vehicleSpeed >= 30)
+    {
+      steeringAngleRaw = 800;
+    }
+    else
+    {
+      steeringAngleRaw = 400;
+    }
+  }
+
+  mSas.SteeringAngleRaw = clampRange(steeringAngleRaw, 0, 65535);
+  output(mSas);
+
+  if (mSas.SteeringAngleRaw != gLastAngle)
+  {
+    write("[SAS] angleRaw=%d input=%d speed=%d",
+          mSas.SteeringAngleRaw,
+          steeringInput,
+          vehicleSpeed);
+    gLastAngle = mSas.SteeringAngleRaw;
+  }
+}
+
+on start
+{
+  gSteeringInput = 0;
+  gVehicleSpeed = 0;
+  gSteeringRxMs = 0;
+  gVehicleStateRxMs = 0;
+  gLastSteeringInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastAngle = -1;
+  setTimer(tSasCycle, 100);
+  write("[SAS] start");
+}
+
+on timer tSasCycle
+{
+
+  publishSasState();
+  setTimer(tSasCycle, 100);
+}
+
+on message frmSteeringCanMsg
+{
+  gSteeringInput = clampRange((int)this.SteeringInput, 0, 1);
+  gSteeringRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gVehicleStateRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tSasCycle);
+}

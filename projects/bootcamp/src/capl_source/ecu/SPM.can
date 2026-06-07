@@ -1,0 +1,248 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tSurroundParkCycle;
+  int gAvmActive;
+  int gViewMode;
+  int gParkAssistActive;
+  int gMinDistanceCm;
+  int gSpasSteerAssist;
+  int gRspaBrakeHold;
+  dword gAvmRxMs;
+  dword gParkAssistRxMs;
+  dword gSpasRxMs;
+  dword gRspaRxMs;
+  int gLastAvmInputStale;
+  int gLastParkAssistInputStale;
+  int gLastSpasInputStale;
+  int gLastRspaInputStale;
+  int gLastActive;
+  int gLastReady;
+  int gLastViewMode;
+  int gLastProximityClass;
+  int gLastDistance;
+}
+
+void traceSpmInputHealth(int avmInputStale, int parkAssistInputStale,
+                         int spasInputStale, int rspaInputStale)
+{
+  if (avmInputStale != gLastAvmInputStale)
+  {
+    if (avmInputStale == 1)
+    {
+      write("[SPM] avm input stale");
+    }
+    else
+    {
+      write("[SPM] avm input restored");
+    }
+    gLastAvmInputStale = avmInputStale;
+  }
+
+  if (parkAssistInputStale != gLastParkAssistInputStale)
+  {
+    if (parkAssistInputStale == 1)
+    {
+      write("[SPM] park-ultrasonic input stale");
+    }
+    else
+    {
+      write("[SPM] park-ultrasonic input restored");
+    }
+    gLastParkAssistInputStale = parkAssistInputStale;
+  }
+
+  if (spasInputStale != gLastSpasInputStale)
+  {
+    if (spasInputStale == 1)
+    {
+      write("[SPM] spas input stale");
+    }
+    else
+    {
+      write("[SPM] spas input restored");
+    }
+    gLastSpasInputStale = spasInputStale;
+  }
+
+  if (rspaInputStale != gLastRspaInputStale)
+  {
+    if (rspaInputStale == 1)
+    {
+      write("[SPM] rspa input stale");
+    }
+    else
+    {
+      write("[SPM] rspa input restored");
+    }
+    gLastRspaInputStale = rspaInputStale;
+  }
+}
+
+void publishSurroundParkState()
+{
+  message frmSurroundParkMasterStateMsg mSurround;
+  int avmInputStale;
+  int parkAssistInputStale;
+  int spasInputStale;
+  int rspaInputStale;
+  int avmActive;
+  int viewMode;
+  int parkAssistActive;
+  int minDistanceCm;
+  int spasSteerAssist;
+  int rspaBrakeHold;
+  int surroundActive;
+  int autoParkReady;
+  int proximityClass;
+  int distanceBucket;
+
+  avmInputStale = (ethIsRecentTick(gAvmRxMs, 300) == 1) ? 0 : 1;
+  parkAssistInputStale = (ethIsRecentTick(gParkAssistRxMs, 300) == 1) ? 0 : 1;
+  spasInputStale = (ethIsRecentTick(gSpasRxMs, 300) == 1) ? 0 : 1;
+  rspaInputStale = (ethIsRecentTick(gRspaRxMs, 300) == 1) ? 0 : 1;
+  traceSpmInputHealth(avmInputStale, parkAssistInputStale, spasInputStale, rspaInputStale);
+
+  avmActive = gAvmActive;
+  viewMode = gViewMode;
+  parkAssistActive = gParkAssistActive;
+  minDistanceCm = gMinDistanceCm;
+  spasSteerAssist = gSpasSteerAssist;
+  rspaBrakeHold = gRspaBrakeHold;
+  if (avmInputStale == 1)
+  {
+    avmActive = 0;
+    viewMode = 0;
+  }
+  if (parkAssistInputStale == 1)
+  {
+    parkAssistActive = 0;
+    minDistanceCm = 255;
+  }
+  if (spasInputStale == 1)
+  {
+    spasSteerAssist = 0;
+  }
+  if (rspaInputStale == 1)
+  {
+    rspaBrakeHold = 0;
+  }
+
+  surroundActive = (avmActive == 1 || parkAssistActive == 1) ? 1 : 0;
+  autoParkReady = (spasSteerAssist == 1 || rspaBrakeHold == 1) ? 1 : 0;
+
+  if (minDistanceCm <= 30)
+  {
+    proximityClass = 3;
+  }
+  else if (minDistanceCm <= 60)
+  {
+    proximityClass = 2;
+  }
+  else if (minDistanceCm <= 120)
+  {
+    proximityClass = 1;
+  }
+  else
+  {
+    proximityClass = 0;
+  }
+
+  distanceBucket = clampRange(minDistanceCm, 0, 255);
+
+  mSurround.SurroundActive = surroundActive;
+  mSurround.AutoParkReady = autoParkReady;
+  mSurround.ViewMode = clampRange(viewMode, 0, 7);
+  mSurround.ProximityClass = clampRange(proximityClass, 0, 3);
+  mSurround.SteeringAssistReq = clampRange(spasSteerAssist, 0, 1);
+  mSurround.BrakeHoldReq = clampRange(rspaBrakeHold, 0, 1);
+  mSurround.DistanceBucket = distanceBucket;
+  output(mSurround);
+
+  if (surroundActive != gLastActive ||
+      autoParkReady != gLastReady ||
+      viewMode != gLastViewMode ||
+      proximityClass != gLastProximityClass ||
+      distanceBucket != gLastDistance)
+  {
+    write("[SPM] active=%d ready=%d view=%d prox=%d dist=%d steer=%d hold=%d",
+          surroundActive,
+          autoParkReady,
+          viewMode,
+          proximityClass,
+          distanceBucket,
+          spasSteerAssist,
+          rspaBrakeHold);
+    gLastActive = surroundActive;
+    gLastReady = autoParkReady;
+    gLastViewMode = viewMode;
+    gLastProximityClass = proximityClass;
+    gLastDistance = distanceBucket;
+  }
+}
+
+on start
+{
+  gAvmActive = 0;
+  gViewMode = 0;
+  gParkAssistActive = 0;
+  gMinDistanceCm = 255;
+  gSpasSteerAssist = 0;
+  gRspaBrakeHold = 0;
+  gAvmRxMs = 0;
+  gParkAssistRxMs = 0;
+  gSpasRxMs = 0;
+  gRspaRxMs = 0;
+  gLastAvmInputStale = 0;
+  gLastParkAssistInputStale = 0;
+  gLastSpasInputStale = 0;
+  gLastRspaInputStale = 0;
+  gLastActive = -1;
+  gLastReady = -1;
+  gLastViewMode = -1;
+  gLastProximityClass = -1;
+  gLastDistance = -1;
+  setTimer(tSurroundParkCycle, 100);
+  write("[SPM] start");
+}
+
+on timer tSurroundParkCycle
+{
+  publishSurroundParkState();
+  setTimer(tSurroundParkCycle, 100);
+}
+
+on message frmAvmStateMsg
+{
+  gAvmActive = clampRange((int)this.AvmActive, 0, 1);
+  gViewMode = clampRange((int)this.ViewMode, 0, 7);
+  gAvmRxMs = getSimulationTimeMs();
+}
+
+on message frmParkUltrasonicStateMsg
+{
+  gParkAssistActive = clampRange((int)this.ParkAssistActive, 0, 1);
+  gMinDistanceCm = clampRange((int)this.MinDistanceCm, 0, 255);
+  gParkAssistRxMs = getSimulationTimeMs();
+}
+
+on message frmSpasStateMsg
+{
+  gSpasSteerAssist = clampRange((int)this.SteeringAssistReq, 0, 1);
+  gSpasRxMs = getSimulationTimeMs();
+}
+
+on message frmRspaStateMsg
+{
+  gRspaBrakeHold = clampRange((int)this.BrakeHoldReq, 0, 1);
+  gRspaRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tSurroundParkCycle);
+}

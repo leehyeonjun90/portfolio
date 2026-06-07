@@ -1,0 +1,121 @@
+/*@!Encoding:949*/
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tAcuCycle;
+  int gDriverSeatBelt;
+  int gPassengerSeatBelt;
+  int gSeatBeltWarnLvl;
+  dword gSeatBeltRxMs;
+  int gLastSeatBeltInputStale;
+  int gLastArmed;
+  int gLastSeverity;
+  int gLastPretension;
+  int gLastWarn;
+}
+
+void traceAcuInputHealth(int seatBeltInputStale)
+{
+  if (seatBeltInputStale != gLastSeatBeltInputStale)
+  {
+    if (seatBeltInputStale == 1)
+    {
+      write("[ACU] seat-belt input stale");
+    }
+    else
+    {
+      write("[ACU] seat-belt input restored");
+    }
+    gLastSeatBeltInputStale = seatBeltInputStale;
+  }
+}
+
+on start
+{
+  gDriverSeatBelt = 1;
+  gPassengerSeatBelt = 1;
+  gSeatBeltWarnLvl = 0;
+  gSeatBeltRxMs = 0;
+  gLastSeatBeltInputStale = 0;
+  gLastArmed = -1;
+  gLastSeverity = -1;
+  gLastPretension = -1;
+  gLastWarn = -1;
+  setTimer(tAcuCycle, 100);
+  write("[ACU] start");
+}
+
+on message frmSeatBeltStateMsg
+{
+  gDriverSeatBelt = clampRange((int)this.DriverSeatBelt, 0, 1);
+  gPassengerSeatBelt = clampRange((int)this.PassengerSeatBelt, 0, 1);
+  gSeatBeltWarnLvl = clampRange((int)this.SeatBeltWarnLvl, 0, 3);
+  gSeatBeltRxMs = getSimulationTimeMs();
+}
+
+on timer tAcuCycle
+{
+  message frmAcuStateMsg mAcu;
+  int seatBeltInputStale;
+  int driverSeatBelt;
+  int passengerSeatBelt;
+  int seatBeltWarnLvl;
+  int deploymentArmed;
+  int crashSeverity;
+  int pretensionReq;
+  int airbagWarn;
+  
+  seatBeltInputStale = (ethIsRecentTick(gSeatBeltRxMs, 300) == 1) ? 0 : 1;
+  traceAcuInputHealth(seatBeltInputStale);
+
+  driverSeatBelt = gDriverSeatBelt;
+  passengerSeatBelt = gPassengerSeatBelt;
+  seatBeltWarnLvl = gSeatBeltWarnLvl;
+  if (seatBeltInputStale == 1)
+  {
+    driverSeatBelt = 0;
+    passengerSeatBelt = 0;
+    seatBeltWarnLvl = 0;
+  }
+
+  deploymentArmed = (driverSeatBelt == 1 || passengerSeatBelt == 1) ? 1 : 0;
+  crashSeverity = 0;
+  pretensionReq = (seatBeltWarnLvl >= 2) ? 1 : 0;
+  airbagWarn = (deploymentArmed == 0 && seatBeltWarnLvl >= 2) ? 1 : 0;
+
+  mAcu.DeploymentArmed = deploymentArmed;
+  mAcu.CrashSeverity = clampRange(crashSeverity, 0, 7);
+  mAcu.PretensionReq = pretensionReq;
+  mAcu.AirbagWarn = airbagWarn;
+  output(mAcu);
+
+  if (mAcu.DeploymentArmed != gLastArmed ||
+      mAcu.CrashSeverity != gLastSeverity ||
+      mAcu.PretensionReq != gLastPretension ||
+      mAcu.AirbagWarn != gLastWarn)
+  {
+    write("[ACU] armed=%d sev=%d pretension=%d warn=%d beltDrv=%d beltPass=%d warnLvl=%d",
+          mAcu.DeploymentArmed,
+          mAcu.CrashSeverity,
+          mAcu.PretensionReq,
+          mAcu.AirbagWarn,
+          driverSeatBelt,
+          passengerSeatBelt,
+          seatBeltWarnLvl);
+    gLastArmed = mAcu.DeploymentArmed;
+    gLastSeverity = mAcu.CrashSeverity;
+    gLastPretension = mAcu.PretensionReq;
+    gLastWarn = mAcu.AirbagWarn;
+  }
+
+  setTimer(tAcuCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tAcuCycle);
+}

@@ -1,0 +1,160 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tRspaCycle;
+  int gVehicleSpeed;
+  int gDriveState;
+  int gTurnLampState;
+  dword gVehicleRxMs;
+  dword gLampRxMs;
+  int gLastVehicleInputStale;
+  int gLastLampInputStale;
+  int gLastReady;
+  int gLastDirection;
+  int gLastBrakeHoldReq;
+  int gLastSpeed;
+}
+
+void traceRspaInputHealth(int vehicleInputStale, int lampInputStale)
+{
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[RSPA] vehicle input stale");
+    }
+    else
+    {
+      write("[RSPA] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+
+  if (lampInputStale != gLastLampInputStale)
+  {
+    if (lampInputStale == 1)
+    {
+      write("[RSPA] lamp input stale");
+    }
+    else
+    {
+      write("[RSPA] lamp input restored");
+    }
+    gLastLampInputStale = lampInputStale;
+  }
+}
+
+void publishRspaState()
+{
+  message frmRspaStateMsg mRspa;
+  int vehicleInputStale;
+  int lampInputStale;
+  int vehicleSpeed;
+  int driveState;
+  int turnLampState;
+  int ready;
+  int direction;
+  int brakeHoldReq;
+
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  lampInputStale = (ethIsRecentTick(gLampRxMs, 300) == 1) ? 0 : 1;
+  traceRspaInputHealth(vehicleInputStale, lampInputStale);
+
+  vehicleSpeed = gVehicleSpeed;
+  driveState = gDriveState;
+  turnLampState = gTurnLampState;
+  if (vehicleInputStale == 1)
+  {
+    vehicleSpeed = 0;
+    driveState = 0;
+  }
+  if (lampInputStale == 1)
+  {
+    turnLampState = 0;
+  }
+
+  ready = 0;
+  direction = 0;
+  brakeHoldReq = 0;
+
+  if (vehicleInputStale == 0 && vehicleSpeed <= 5 && driveState >= 2)
+  {
+    ready = 1;
+  }
+  if (ready == 1)
+  {
+    direction = turnLampState;
+  }
+  if (vehicleSpeed <= 3 && ready == 1)
+  {
+    brakeHoldReq = 1;
+  }
+
+  mRspa.RspaReady = ready;
+  mRspa.RspaDirection = clampRange(direction, 0, 3);
+  mRspa.BrakeHoldReq = brakeHoldReq;
+  mRspa.VehicleSpeed = vehicleSpeed;
+  output(mRspa);
+
+  if (ready != gLastReady ||
+      direction != gLastDirection ||
+      brakeHoldReq != gLastBrakeHoldReq ||
+      vehicleSpeed != gLastSpeed)
+  {
+    write("[RSPA] ready=%d dir=%d hold=%d speed=%d drive=%d",
+          ready,
+          direction,
+          brakeHoldReq,
+          vehicleSpeed,
+          driveState);
+    gLastReady = ready;
+    gLastDirection = direction;
+    gLastBrakeHoldReq = brakeHoldReq;
+    gLastSpeed = vehicleSpeed;
+  }
+}
+
+on start
+{
+  gVehicleSpeed = 0;
+  gDriveState = 0;
+  gTurnLampState = 0;
+  gVehicleRxMs = 0;
+  gLampRxMs = 0;
+  gLastVehicleInputStale = 0;
+  gLastLampInputStale = 0;
+  gLastReady = -1;
+  gLastDirection = -1;
+  gLastBrakeHoldReq = -1;
+  gLastSpeed = -1;
+  setTimer(tRspaCycle, 100);
+  write("[RSPA] start");
+}
+
+on timer tRspaCycle
+{
+  publishRspaState();
+  setTimer(tRspaCycle, 100);
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on message frmLampControlMsg
+{
+  gTurnLampState = clampRange((int)this.TurnLampState, 0, 3);
+  gLampRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tRspaCycle);
+}

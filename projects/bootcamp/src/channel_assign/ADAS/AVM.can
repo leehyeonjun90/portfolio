@@ -1,0 +1,196 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tAvmCycle;
+  int gVehicleSpeed;
+  int gSteeringInput;
+  int gBrakePressed;
+  dword gVehicleRxMs;
+  dword gSteeringRxMs;
+  dword gBrakeRxMs;
+  int gLastVehicleInputStale;
+  int gLastSteeringInputStale;
+  int gLastBrakeInputStale;
+  int gLastActive;
+  int gLastViewMode;
+  int gLastOverlay;
+  int gLastSpeed;
+}
+
+void traceAvmInputHealth(int vehicleInputStale, int steeringInputStale, int brakeInputStale)
+{
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[AVM] vehicle input stale");
+    }
+    else
+    {
+      write("[AVM] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+
+  if (steeringInputStale != gLastSteeringInputStale)
+  {
+    if (steeringInputStale == 1)
+    {
+      write("[AVM] steering input stale");
+    }
+    else
+    {
+      write("[AVM] steering input restored");
+    }
+    gLastSteeringInputStale = steeringInputStale;
+  }
+
+  if (brakeInputStale != gLastBrakeInputStale)
+  {
+    if (brakeInputStale == 1)
+    {
+      write("[AVM] brake input stale");
+    }
+    else
+    {
+      write("[AVM] brake input restored");
+    }
+    gLastBrakeInputStale = brakeInputStale;
+  }
+}
+
+void publishAvmState()
+{
+  message frmAvmStateMsg mAvm;
+  int vehicleInputStale;
+  int steeringInputStale;
+  int brakeInputStale;
+  int vehicleSpeed;
+  int steeringInput;
+  int brakePedal;
+  int active;
+  int viewMode;
+  int overlay;
+
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  steeringInputStale = (ethIsRecentTick(gSteeringRxMs, 300) == 1) ? 0 : 1;
+  brakeInputStale = (ethIsRecentTick(gBrakeRxMs, 300) == 1) ? 0 : 1;
+  traceAvmInputHealth(vehicleInputStale, steeringInputStale, brakeInputStale);
+
+  vehicleSpeed = gVehicleSpeed;
+  steeringInput = gSteeringInput;
+  brakePedal = gBrakePressed;
+  if (vehicleInputStale == 1)
+  {
+    vehicleSpeed = 0;
+  }
+  if (steeringInputStale == 1)
+  {
+    steeringInput = 0;
+  }
+  if (brakeInputStale == 1)
+  {
+    brakePedal = 0;
+  }
+
+  /* Do not auto-open surround view at idle just because speed is low.
+     Require an actual parking interaction input. */
+  active = (vehicleInputStale == 0 &&
+            vehicleSpeed <= 20 &&
+            (brakePedal == 1 || steeringInput == 1)) ? 1 : 0;
+  viewMode = 0;
+  overlay = 0;
+
+  if (active == 1)
+  {
+    if (vehicleSpeed <= 5 && brakePedal == 1)
+    {
+      viewMode = 3;
+    }
+    else if (steeringInput == 1)
+    {
+      viewMode = 1;
+    }
+    else
+    {
+      viewMode = 2;
+    }
+    overlay = (steeringInput == 1) ? 1 : 0;
+  }
+
+  mAvm.AvmActive = active;
+  mAvm.ViewMode = clampRange(viewMode, 0, 7);
+  mAvm.SteeringOverlay = overlay;
+  mAvm.VehicleSpeed = vehicleSpeed;
+  output(mAvm);
+
+  if (active != gLastActive ||
+      viewMode != gLastViewMode ||
+      overlay != gLastOverlay ||
+      vehicleSpeed != gLastSpeed)
+  {
+    write("[AVM] active=%d view=%d overlay=%d speed=%d brake=%d steerIn=%d",
+          active,
+          viewMode,
+          overlay,
+          vehicleSpeed,
+          brakePedal,
+          steeringInput);
+    gLastActive = active;
+    gLastViewMode = viewMode;
+    gLastOverlay = overlay;
+    gLastSpeed = vehicleSpeed;
+  }
+}
+
+on start
+{
+  gVehicleSpeed = 0;
+  gSteeringInput = 0;
+  gBrakePressed = 0;
+  gVehicleRxMs = 0;
+  gSteeringRxMs = 0;
+  gBrakeRxMs = 0;
+  gLastVehicleInputStale = 0;
+  gLastSteeringInputStale = 0;
+  gLastBrakeInputStale = 0;
+  gLastActive = -1;
+  gLastViewMode = -1;
+  gLastOverlay = -1;
+  gLastSpeed = -1;
+  setTimer(tAvmCycle, 100);
+  write("[AVM] start");
+}
+
+on timer tAvmCycle
+{
+  publishAvmState();
+  setTimer(tAvmCycle, 100);
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on message frmSteeringStateCanMsg
+{
+  gSteeringInput = clampRange((int)this.SteeringState, 0, 1);
+  gSteeringRxMs = getSimulationTimeMs();
+}
+
+on message frmBrakeStatusMsg
+{
+  gBrakePressed = ((((int)this.BrakeMode) > 0) || (((int)this.BrakePressure) > 0)) ? 1 : 0;
+  gBrakeRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tAvmCycle);
+}

@@ -1,0 +1,231 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tTmuCycle;
+  int gConnType;
+  int gConnState;
+  int gSignalBars;
+  int gIviCpuLoad;
+  int gIviMemLoad;
+  int gDriveState;
+  dword gConnRxMs;
+  dword gIviHealthRxMs;
+  dword gVehicleRxMs;
+  int gLastConnInputStale;
+  int gLastIviHealthInputStale;
+  int gLastVehicleInputStale;
+  int gLastLinkState;
+  int gLastServiceMode;
+  int gLastRemoteClimateReq;
+}
+
+void traceTmuInputHealth(int connInputStale, int iviHealthInputStale, int vehicleInputStale)
+{
+  if (connInputStale != gLastConnInputStale)
+  {
+    if (connInputStale == 1)
+    {
+      write("[TMU] connectivity input stale");
+    }
+    else
+    {
+      write("[TMU] connectivity input restored");
+    }
+    gLastConnInputStale = connInputStale;
+  }
+
+  if (iviHealthInputStale != gLastIviHealthInputStale)
+  {
+    if (iviHealthInputStale == 1)
+    {
+      write("[TMU] ivi-health input stale");
+    }
+    else
+    {
+      write("[TMU] ivi-health input restored");
+    }
+    gLastIviHealthInputStale = iviHealthInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[TMU] vehicle input stale");
+    }
+    else
+    {
+      write("[TMU] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+void publishTmuState()
+{
+  message frmTmuServiceStateMsg mTmu;
+  int connInputStale;
+  int iviHealthInputStale;
+  int vehicleInputStale;
+  int connType;
+  int connState;
+  int signalBars;
+  int iviCpuLoad;
+  int iviMemLoad;
+  int driveState;
+  int linkState;
+  int serviceMode;
+  int remoteClimateReq;
+
+  connInputStale = (ethIsRecentTick(gConnRxMs, 300) == 1) ? 0 : 1;
+  iviHealthInputStale = (ethIsRecentTick(gIviHealthRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  traceTmuInputHealth(connInputStale, iviHealthInputStale, vehicleInputStale);
+
+  connType = gConnType;
+  connState = gConnState;
+  signalBars = gSignalBars;
+  iviCpuLoad = gIviCpuLoad;
+  iviMemLoad = gIviMemLoad;
+  driveState = gDriveState;
+  if (connInputStale == 1)
+  {
+    connType = 0;
+    connState = 0;
+    signalBars = 0;
+  }
+  if (iviHealthInputStale == 1)
+  {
+    iviCpuLoad = 100;
+    iviMemLoad = 100;
+  }
+  if (vehicleInputStale == 1)
+  {
+    driveState = 3;
+  }
+
+  linkState = 0;
+  if (connState > 0)
+  {
+    linkState = 1;
+    if (signalBars >= 3)
+    {
+      linkState = 2;
+    }
+  }
+
+  serviceMode = 0;
+  if (linkState == 0)
+  {
+    serviceMode = 0;
+  }
+  else if (iviCpuLoad >= 85 || iviMemLoad >= 85)
+  {
+    serviceMode = 2;
+  }
+  else if (signalBars <= 1 || connType == 0)
+  {
+    serviceMode = 2;
+  }
+  else if (iviCpuLoad >= 60 || iviMemLoad >= 60)
+  {
+    serviceMode = 1;
+  }
+  else
+  {
+    serviceMode = 1;
+  }
+
+  remoteClimateReq = 0;
+  if (serviceMode == 1 &&
+      connType == 1 &&
+      signalBars >= 3 &&
+      iviCpuLoad < 60 &&
+      iviMemLoad < 60 &&
+      driveState == 0)
+  {
+    remoteClimateReq = 1;
+  }
+
+  mTmu.TmuLinkState = linkState;
+  mTmu.TmuServiceMode = serviceMode;
+  mTmu.RemoteClimateReq = remoteClimateReq;
+  mTmu.SignalBars = clampRange(signalBars, 0, 15);
+  output(mTmu);
+
+  if (linkState != gLastLinkState ||
+      serviceMode != gLastServiceMode ||
+      remoteClimateReq != gLastRemoteClimateReq)
+  {
+    write("[TMU] link=%d service=%d climate=%d bars=%d connType=%d cpu=%d mem=%d",
+          linkState,
+          serviceMode,
+          remoteClimateReq,
+          signalBars,
+          connType,
+          iviCpuLoad,
+          iviMemLoad);
+    gLastLinkState = linkState;
+    gLastServiceMode = serviceMode;
+    gLastRemoteClimateReq = remoteClimateReq;
+  }
+}
+
+on start
+{
+  gConnType = 0;
+  gConnState = 0;
+  gSignalBars = 0;
+  gIviCpuLoad = 0;
+  gIviMemLoad = 0;
+  gDriveState = 0;
+  gConnRxMs = 0;
+  gIviHealthRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastConnInputStale = 0;
+  gLastIviHealthInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastLinkState = -1;
+  gLastServiceMode = -1;
+  gLastRemoteClimateReq = -1;
+
+  setTimer(tTmuCycle, 100);
+  write("[TMU] start");
+}
+
+on timer tTmuCycle
+{
+
+  publishTmuState();
+  setTimer(tTmuCycle, 100);
+}
+
+on message frmConnectivityStateMsg
+{
+  gConnType = clampRange((int)this.ConnectivityType, 0, 7);
+  gConnState = clampRange((int)this.ConnectivityState, 0, 7);
+  gSignalBars = clampRange((int)this.SignalBars, 0, 15);
+  gConnRxMs = getSimulationTimeMs();
+}
+
+on message frmIviHealthDetailMsg
+{
+  gIviCpuLoad = clampRange((int)this.IviCpuLoad, 0, 100);
+  gIviMemLoad = clampRange((int)this.IviMemLoad, 0, 100);
+  gIviHealthRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tTmuCycle);
+}

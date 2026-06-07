@@ -1,0 +1,140 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tSmkCycle;
+  int gVehicleAccessState;
+  int gKeyPresence;
+  int gDriveState;
+  dword gDkeyRxMs;
+  dword gVehicleRxMs;
+  int gLastDkeyInputStale;
+  int gLastVehicleInputStale;
+  int gLastImmobilizerState;
+  int gLastKeyAuthState;
+}
+
+void traceSmkInputHealth(int dkeyInputStale, int vehicleInputStale)
+{
+  if (dkeyInputStale != gLastDkeyInputStale)
+  {
+    if (dkeyInputStale == 1)
+    {
+      write("[SMK] digital-key input stale");
+    }
+    else
+    {
+      write("[SMK] digital-key input restored");
+    }
+    gLastDkeyInputStale = dkeyInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[SMK] vehicle input stale");
+    }
+    else
+    {
+      write("[SMK] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+void publishSmkState()
+{
+  message frmImmobilizerStateMsg mImmobilizer;
+  int dkeyInputStale;
+  int vehicleInputStale;
+  int driveState;
+  int accessAuthorized;
+  int immobilizerState;
+  int keyAuthState;
+
+  dkeyInputStale = (ethIsRecentTick(gDkeyRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  traceSmkInputHealth(dkeyInputStale, vehicleInputStale);
+
+  driveState = gDriveState;
+  if (vehicleInputStale == 1)
+  {
+    driveState = 3;
+  }
+
+  accessAuthorized = 0;
+  if (dkeyInputStale == 0 &&
+      gKeyPresence == 1 &&
+      gVehicleAccessState >= 1)
+  {
+    accessAuthorized = 1;
+  }
+
+  immobilizerState = 1;
+  if (vehicleInputStale == 0 && driveState > 0)
+  {
+    immobilizerState = 0;
+  }
+
+  keyAuthState = accessAuthorized;
+
+  mImmobilizer.ImmobilizerState = clampRange(immobilizerState, 0, 3);
+  mImmobilizer.KeyAuthState = clampRange(keyAuthState, 0, 3);
+  output(mImmobilizer);
+
+  if (mImmobilizer.ImmobilizerState != gLastImmobilizerState ||
+      mImmobilizer.KeyAuthState != gLastKeyAuthState)
+  {
+    write("[SMK] immo=%d auth=%d access=%d key=%d drive=%d",
+          mImmobilizer.ImmobilizerState,
+          mImmobilizer.KeyAuthState,
+          gVehicleAccessState,
+          gKeyPresence,
+          driveState);
+    gLastImmobilizerState = mImmobilizer.ImmobilizerState;
+    gLastKeyAuthState = mImmobilizer.KeyAuthState;
+  }
+}
+
+on start
+{
+  gVehicleAccessState = 0;
+  gKeyPresence = 0;
+  gDriveState = 0;
+  gDkeyRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastDkeyInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastImmobilizerState = -1;
+  gLastKeyAuthState = -1;
+  setTimer(tSmkCycle, 100);
+  write("[SMK] start");
+}
+
+on message frmDigitalKeyStateMsg
+{
+  gVehicleAccessState = clampRange((int)this.VehicleAccessState, 0, 7);
+  gKeyPresence = clampRange((int)this.KeyPresence, 0, 1);
+  gDkeyRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on timer tSmkCycle
+{
+  publishSmkState();
+  setTimer(tSmkCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tSmkCycle);
+}

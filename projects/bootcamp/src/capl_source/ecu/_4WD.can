@@ -1,0 +1,132 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer t4wdCycle;
+  int gDriveMode;
+  int gEnergyFlowMode;
+  dword gDriveModeRxMs;
+  dword gEnergyFlowRxMs;
+  int gLastDriveModeInputStale;
+  int gLastEnergyFlowInputStale;
+  int gLastMode;
+  int gLastClutch;
+  int gLastSplit;
+}
+
+void trace4wdInputHealth(int driveModeInputStale, int energyFlowInputStale)
+{
+  if (driveModeInputStale != gLastDriveModeInputStale)
+  {
+    if (driveModeInputStale == 1)
+    {
+      write("[_4WD] drive-mode input stale");
+    }
+    else
+    {
+      write("[_4WD] drive-mode input restored");
+    }
+    gLastDriveModeInputStale = driveModeInputStale;
+  }
+
+  if (energyFlowInputStale != gLastEnergyFlowInputStale)
+  {
+    if (energyFlowInputStale == 1)
+    {
+      write("[_4WD] energy-flow input stale");
+    }
+    else
+    {
+      write("[_4WD] energy-flow input restored");
+    }
+    gLastEnergyFlowInputStale = energyFlowInputStale;
+  }
+}
+
+on start
+{
+  gDriveMode = 0;
+  gEnergyFlowMode = 0;
+  gDriveModeRxMs = 0;
+  gEnergyFlowRxMs = 0;
+  gLastDriveModeInputStale = 0;
+  gLastEnergyFlowInputStale = 0;
+  gLastMode = -1;
+  gLastClutch = -1;
+  gLastSplit = -1;
+  setTimer(t4wdCycle, 100);
+  write("[_4WD] start");
+}
+
+on message frmVehicleModeMsg
+{
+  gDriveMode = clampRange((int)this.DriveMode, 0, 7);
+  gDriveModeRxMs = getSimulationTimeMs();
+}
+
+on message frmEnergyFlowStateMsg
+{
+  gEnergyFlowMode = clampRange((int)this.EnergyFlowMode, 0, 7);
+  gEnergyFlowRxMs = getSimulationTimeMs();
+}
+
+on timer t4wdCycle
+{
+  message frm4wdStateMsg m4wd;
+  int driveModeInputStale;
+  int energyFlowInputStale;
+  int driveMode;
+  int energyFlowMode;
+  int mode4wd;
+  int centerClutchState;
+  int torqueSplitFront;
+
+  driveModeInputStale = (ethIsRecentTick(gDriveModeRxMs, 300) == 1) ? 0 : 1;
+  energyFlowInputStale = (ethIsRecentTick(gEnergyFlowRxMs, 300) == 1) ? 0 : 1;
+  trace4wdInputHealth(driveModeInputStale, energyFlowInputStale);
+
+  driveMode = gDriveMode;
+  energyFlowMode = gEnergyFlowMode;
+  if (driveModeInputStale == 1)
+  {
+    driveMode = 0;
+  }
+  if (energyFlowInputStale == 1)
+  {
+    energyFlowMode = 0;
+  }
+
+  mode4wd = (driveMode >= 3) ? 2 : ((energyFlowMode > 0) ? 1 : 0);
+  centerClutchState = (mode4wd > 0) ? 2 : 0;
+  torqueSplitFront = (mode4wd == 2) ? 55 : ((mode4wd == 1) ? 45 : 0);
+
+  m4wd.Mode4wd = clampRange(mode4wd, 0, 7);
+  m4wd.CenterClutchState = clampRange(centerClutchState, 0, 3);
+  m4wd.TorqueSplitFront = clampRange(torqueSplitFront, 0, 100);
+  output(m4wd);
+
+  if (m4wd.Mode4wd != gLastMode ||
+      m4wd.CenterClutchState != gLastClutch ||
+      m4wd.TorqueSplitFront != gLastSplit)
+  {
+    write("[_4WD] mode=%d clutch=%d split=%d drive=%d flow=%d",
+          m4wd.Mode4wd,
+          m4wd.CenterClutchState,
+          m4wd.TorqueSplitFront,
+          driveMode,
+          energyFlowMode);
+    gLastMode = m4wd.Mode4wd;
+    gLastClutch = m4wd.CenterClutchState;
+    gLastSplit = m4wd.TorqueSplitFront;
+  }
+
+  setTimer(t4wdCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(t4wdCycle);
+}

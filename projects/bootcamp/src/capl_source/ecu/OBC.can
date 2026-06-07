@@ -1,0 +1,154 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tObcCycle;
+  int gBatterySoc;
+  int gChargingState;
+  int gDriveState;
+  dword gFuelBatteryRxMs;
+  dword gVehicleRxMs;
+  int gLastState;
+  int gLastPlug;
+  int gLastPower;
+  int gLastInputStale;
+  int gLastVehicleInputStale;
+}
+
+on start
+{
+  gBatterySoc = 95;
+  gChargingState = 0;
+  gDriveState = 0;
+  gFuelBatteryRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastState = -1;
+  gLastPlug = -1;
+  gLastPower = -1;
+  gLastInputStale = 1;
+  gLastVehicleInputStale = 1;
+  setTimer(tObcCycle, 100);
+  write("[OBC] start");
+}
+
+on message frmFuelBatteryStateMsg
+{
+  gBatterySoc = clampRange((int)this.BatterySoc, 0, 100);
+  gChargingState = clampRange((int)this.ChargingState, 0, 3);
+  gFuelBatteryRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on timer tObcCycle
+{
+  message frmObcStateMsg mObc;
+  int driveState;
+  int inputStale;
+  int vehicleInputStale;
+  int batterySoc;
+  int chargingState;
+  int vehicleParked;
+  int obcState;
+  int acPlugState;
+  int chargePowerKw;
+  inputStale = 1;
+  if (gFuelBatteryRxMs != 0 &&
+      (getSimulationTimeMs() - gFuelBatteryRxMs) <= 300)
+  {
+    inputStale = 0;
+  }
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+
+  batterySoc = gBatterySoc;
+  chargingState = gChargingState;
+  driveState = gDriveState;
+  if (inputStale == 1)
+  {
+    batterySoc = 50;
+    chargingState = 0;
+  }
+  if (vehicleInputStale == 1)
+  {
+    driveState = ((chargingState == 1 || chargingState == 3) ? 0 : 3);
+  }
+  vehicleParked = ((driveState == 0) || (chargingState > 0)) ? 1 : 0;
+
+  if (inputStale != gLastInputStale)
+  {
+    if (inputStale == 1)
+    {
+      write("[OBC] fuel-battery input stale");
+    }
+    else
+    {
+      write("[OBC] fuel-battery input restored");
+    }
+    gLastInputStale = inputStale;
+  }
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[OBC] vehicle input stale");
+    }
+    else
+    {
+      write("[OBC] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+
+  acPlugState = ((chargingState == 1 || chargingState == 3) && vehicleParked == 1) ? 1 : 0;
+
+  if (chargingState == 3 && acPlugState == 1)
+  {
+    obcState = 3;
+    chargePowerKw = 0;
+  }
+  else if (chargingState == 1 && acPlugState == 1)
+  {
+    obcState = 2;
+    chargePowerKw = clampRange((100 - batterySoc) / 2, 0, 22);
+  }
+  else
+  {
+    obcState = 0;
+    chargePowerKw = 0;
+  }
+
+  mObc.ObcState = clampRange(obcState, 0, 7);
+  mObc.AcPlugState = clampRange(acPlugState, 0, 1);
+  mObc.ChargePowerKw = clampRange(chargePowerKw, 0, 255);
+  output(mObc);
+
+  if (mObc.ObcState != gLastState ||
+      mObc.AcPlugState != gLastPlug ||
+      mObc.ChargePowerKw != gLastPower)
+  {
+    write("[OBC] state=%d plug=%d power=%d soc=%d charge=%d drive=%d",
+          mObc.ObcState,
+          mObc.AcPlugState,
+          mObc.ChargePowerKw,
+          batterySoc,
+          chargingState,
+          driveState);
+    gLastState = mObc.ObcState;
+    gLastPlug = mObc.AcPlugState;
+    gLastPower = mObc.ChargePowerKw;
+  }
+
+  setTimer(tObcCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tObcCycle);
+}

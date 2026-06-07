@@ -1,0 +1,104 @@
+/*@!Encoding:949*/
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tEcsCycle;
+  int gSuspensionMode;
+  int gSuspensionLevel;
+  int gDampingLevel;
+  dword gSuspensionRxMs;
+  int gLastMode;
+  int gLastHeight;
+  int gLastDamping;
+  int gLastInputStale;
+}
+
+on start
+{
+  gSuspensionMode = 0;
+  gSuspensionLevel = 8;
+  gDampingLevel = 12;
+  gSuspensionRxMs = 0;
+  gLastMode = -1;
+  gLastHeight = -1;
+  gLastDamping = -1;
+  gLastInputStale = 1;
+  setTimer(tEcsCycle, 100);
+  write("[ECS] start");
+}
+
+on message frmSuspensionStateMsg
+{
+  gSuspensionMode = clampRange((int)this.SuspensionMode, 0, 7);
+  gSuspensionLevel = clampRange((int)this.SuspensionLevel, 0, 31);
+  gDampingLevel = clampRange((int)this.DampingLevel, 0, 255);
+  gSuspensionRxMs = getSimulationTimeMs();
+}
+
+on timer tEcsCycle
+{
+  message frmEcsStateMsg mEcs;
+  int inputStale;
+  int suspensionMode;
+  int suspensionLevel;
+  int dampingLevel;
+
+  inputStale = 1;
+  if (gSuspensionRxMs != 0 &&
+      (getSimulationTimeMs() - gSuspensionRxMs) <= 300)
+  {
+    inputStale = 0;
+  }
+
+  suspensionMode = gSuspensionMode;
+  suspensionLevel = gSuspensionLevel;
+  dampingLevel = gDampingLevel;
+  if (inputStale == 1)
+  {
+    suspensionMode = 0;
+    suspensionLevel = 8;
+    dampingLevel = 12;
+  }
+
+  if (inputStale != gLastInputStale)
+  {
+    if (inputStale == 1)
+    {
+      write("[ECS] suspension input stale");
+    }
+    else
+    {
+      write("[ECS] suspension input restored");
+    }
+    gLastInputStale = inputStale;
+  }
+
+  mEcs.EcsMode = suspensionMode;
+  mEcs.EcsHeightLevel = suspensionLevel;
+  mEcs.EcsDampingLevel = dampingLevel;
+  output(mEcs);
+
+  if (mEcs.EcsMode != gLastMode ||
+      mEcs.EcsHeightLevel != gLastHeight ||
+      mEcs.EcsDampingLevel != gLastDamping)
+  {
+    write("[ECS] mode=%d height=%d damping=%d",
+          mEcs.EcsMode,
+          mEcs.EcsHeightLevel,
+          mEcs.EcsDampingLevel);
+    gLastMode = mEcs.EcsMode;
+    gLastHeight = mEcs.EcsHeightLevel;
+    gLastDamping = mEcs.EcsDampingLevel;
+  }
+
+  setTimer(tEcsCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tEcsCycle);
+}

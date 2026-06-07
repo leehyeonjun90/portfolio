@@ -1,0 +1,174 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tDcdcCycle;
+  int gBatterySoc;
+  int gChargingState;
+  int gDriveState;
+  dword gFuelBatteryRxMs;
+  dword gVehicleRxMs;
+  int gLastMode;
+  int gLastVolt;
+  int gLastCurr;
+  int gLastInputStale;
+  int gLastVehicleInputStale;
+}
+
+on start
+{
+  gBatterySoc = 95;
+  gChargingState = 0;
+  gDriveState = 0;
+  gFuelBatteryRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastMode = -1;
+  gLastVolt = -1;
+  gLastCurr = -1;
+  gLastInputStale = 1;
+  gLastVehicleInputStale = 1;
+  setTimer(tDcdcCycle, 100);
+  write("[DCDC] start");
+}
+
+on message frmFuelBatteryStateMsg
+{
+  gBatterySoc = clampRange((int)this.BatterySoc, 0, 100);
+  gChargingState = clampRange((int)this.ChargingState, 0, 3);
+  gFuelBatteryRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on timer tDcdcCycle
+{
+  message frmDcdcStateMsg mDcdc;
+  int driveState;
+  int inputStale;
+  int vehicleInputStale;
+  int batterySoc;
+  int chargingState;
+  int vehicleParked;
+  int vehicleDriving;
+  int dcdcMode;
+  int lvOutputVolt;
+  int lvOutputCurr;
+  inputStale = 1;
+  if (gFuelBatteryRxMs != 0 &&
+      (getSimulationTimeMs() - gFuelBatteryRxMs) <= 300)
+  {
+    inputStale = 0;
+  }
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+
+  batterySoc = gBatterySoc;
+  chargingState = gChargingState;
+  driveState = gDriveState;
+  if (inputStale == 1)
+  {
+    batterySoc = 50;
+    chargingState = 0;
+  }
+  if (vehicleInputStale == 1)
+  {
+    driveState = (chargingState == 1) ? 0 : 3;
+  }
+  vehicleParked = (vehicleInputStale == 0 && driveState == 0) ? 1 : 0;
+  vehicleDriving = (vehicleInputStale == 0 && driveState > 0) ? 1 : 0;
+
+  if (inputStale != gLastInputStale)
+  {
+    if (inputStale == 1)
+    {
+      write("[DCDC] fuel-battery input stale");
+    }
+    else
+    {
+      write("[DCDC] fuel-battery input restored");
+    }
+    gLastInputStale = inputStale;
+  }
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[DCDC] vehicle input stale");
+    }
+    else
+    {
+      write("[DCDC] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+
+  if (chargingState == 3 && vehicleParked == 1)
+  {
+    dcdcMode = 3;
+  }
+  else if (chargingState == 1 && vehicleParked == 1)
+  {
+    dcdcMode = 2;
+  }
+  else if (vehicleDriving == 1)
+  {
+    dcdcMode = 1;
+  }
+  else
+  {
+    dcdcMode = 0;
+  }
+
+  lvOutputVolt = (dcdcMode > 0) ? 140 : 124;
+  if (dcdcMode == 3)
+  {
+    lvOutputCurr = 0;
+  }
+  else if (dcdcMode == 2)
+  {
+    lvOutputCurr = 35;
+  }
+  else if (dcdcMode == 1)
+  {
+    lvOutputCurr = 18;
+  }
+  else
+  {
+    lvOutputCurr = 4;
+  }
+  if (batterySoc < 40 && dcdcMode > 0 && dcdcMode < 3) lvOutputCurr = clampRange(lvOutputCurr + 10, 0, 255);
+
+  mDcdc.DcdcMode = clampRange(dcdcMode, 0, 7);
+  mDcdc.LvOutputVolt = clampRange(lvOutputVolt, 0, 255);
+  mDcdc.LvOutputCurr = clampRange(lvOutputCurr, 0, 255);
+  output(mDcdc);
+
+  if (mDcdc.DcdcMode != gLastMode ||
+      mDcdc.LvOutputVolt != gLastVolt ||
+      mDcdc.LvOutputCurr != gLastCurr)
+  {
+    write("[DCDC] mode=%d volt=%d curr=%d soc=%d charge=%d drive=%d",
+          mDcdc.DcdcMode,
+          mDcdc.LvOutputVolt,
+          mDcdc.LvOutputCurr,
+          batterySoc,
+          chargingState,
+          driveState);
+    gLastMode = mDcdc.DcdcMode;
+    gLastVolt = mDcdc.LvOutputVolt;
+    gLastCurr = mDcdc.LvOutputCurr;
+  }
+
+  setTimer(tDcdcCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tDcdcCycle);
+}

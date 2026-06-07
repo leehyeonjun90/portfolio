@@ -1,0 +1,263 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tOtaCycle;
+  int gConnType;
+  int gConnState;
+  int gSignalBars;
+  int gIviCpuLoad;
+  int gIviMemLoad;
+  int gTmuServiceMode;
+  int gDriveState;
+  int gDownloadPercent;
+  dword gConnRxMs;
+  dword gIviHealthRxMs;
+  dword gTmuServiceRxMs;
+  dword gVehicleRxMs;
+  int gLastConnInputStale;
+  int gLastIviHealthInputStale;
+  int gLastTmuInputStale;
+  int gLastVehicleInputStale;
+  int gLastSessionState;
+  int gLastPackageReady;
+  int gLastWindowOpen;
+}
+
+void traceOtaInputHealth(int connInputStale, int iviHealthInputStale, int tmuInputStale, int vehicleInputStale)
+{
+  if (connInputStale != gLastConnInputStale)
+  {
+    if (connInputStale == 1)
+    {
+      write("[OTA] connectivity input stale");
+    }
+    else
+    {
+      write("[OTA] connectivity input restored");
+    }
+    gLastConnInputStale = connInputStale;
+  }
+
+  if (iviHealthInputStale != gLastIviHealthInputStale)
+  {
+    if (iviHealthInputStale == 1)
+    {
+      write("[OTA] ivi-health input stale");
+    }
+    else
+    {
+      write("[OTA] ivi-health input restored");
+    }
+    gLastIviHealthInputStale = iviHealthInputStale;
+  }
+
+  if (tmuInputStale != gLastTmuInputStale)
+  {
+    if (tmuInputStale == 1)
+    {
+      write("[OTA] tmu input stale");
+    }
+    else
+    {
+      write("[OTA] tmu input restored");
+    }
+    gLastTmuInputStale = tmuInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[OTA] vehicle input stale");
+    }
+    else
+    {
+      write("[OTA] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+void publishOtaState()
+{
+  message frmOtaMasterStateMsg mOta;
+  int connInputStale;
+  int iviHealthInputStale;
+  int tmuInputStale;
+  int vehicleInputStale;
+  int driveState;
+  int connState;
+  int signalBars;
+  int iviCpuLoad;
+  int iviMemLoad;
+  int tmuServiceMode;
+  int sessionState;
+  int packageReady;
+  int updateWindowOpen;
+  int rolloutStage;
+
+  connInputStale = (ethIsRecentTick(gConnRxMs, 300) == 1) ? 0 : 1;
+  iviHealthInputStale = (ethIsRecentTick(gIviHealthRxMs, 300) == 1) ? 0 : 1;
+  tmuInputStale = (ethIsRecentTick(gTmuServiceRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  traceOtaInputHealth(connInputStale, iviHealthInputStale, tmuInputStale, vehicleInputStale);
+
+  driveState = gDriveState;
+  connState = gConnState;
+  signalBars = gSignalBars;
+  iviCpuLoad = gIviCpuLoad;
+  iviMemLoad = gIviMemLoad;
+  tmuServiceMode = gTmuServiceMode;
+  if (connInputStale == 1)
+  {
+    connState = 0;
+    signalBars = 0;
+  }
+  if (iviHealthInputStale == 1)
+  {
+    iviCpuLoad = 100;
+    iviMemLoad = 100;
+  }
+  if (tmuInputStale == 1)
+  {
+    tmuServiceMode = 0;
+  }
+  if (vehicleInputStale == 1)
+  {
+    driveState = 3;
+  }
+
+  packageReady = (tmuServiceMode == 1 &&
+                  connState > 0 &&
+                  signalBars >= 2 &&
+                  iviCpuLoad < 80 &&
+                  iviMemLoad < 80) ? 1 : 0;
+
+  updateWindowOpen = (vehicleInputStale == 0 && driveState == 0) ? 1 : 0;
+
+  sessionState = 0;
+  if (tmuServiceMode == 2 || iviCpuLoad >= 90 || iviMemLoad >= 90)
+  {
+    sessionState = 3;
+  }
+  else if (packageReady == 1 && updateWindowOpen == 1)
+  {
+    sessionState = 2;
+  }
+  else if (packageReady == 1 || connState > 0 || tmuServiceMode > 0)
+  {
+    sessionState = 1;
+  }
+
+  if (sessionState == 2)
+  {
+    gDownloadPercent = clampRange(gDownloadPercent + 10, 0, 100);
+  }
+  else if (sessionState == 1)
+  {
+    gDownloadPercent = 0;
+  }
+  else if (sessionState == 3)
+  {
+    gDownloadPercent = 0;
+  }
+
+  rolloutStage = 0;
+  if (gDownloadPercent >= 100)
+  {
+    rolloutStage = 3;
+  }
+  else if (gDownloadPercent >= 60)
+  {
+    rolloutStage = 2;
+  }
+  else if (gDownloadPercent > 0)
+  {
+    rolloutStage = 1;
+  }
+
+  mOta.OtaSessionState = clampRange(sessionState, 0, 3);
+  mOta.PackageReady = clampRange(packageReady, 0, 1);
+  mOta.UpdateWindowOpen = clampRange(updateWindowOpen, 0, 1);
+  mOta.OtaTargetDomain = 1;
+  mOta.DownloadPercent = clampRange(gDownloadPercent, 0, 100);
+  mOta.OtaRolloutStage = clampRange(rolloutStage, 0, 15);
+  output(mOta);
+
+  if (mOta.OtaSessionState != gLastSessionState ||
+      mOta.PackageReady != gLastPackageReady ||
+      mOta.UpdateWindowOpen != gLastWindowOpen)
+  {
+    gLastSessionState = mOta.OtaSessionState;
+    gLastPackageReady = mOta.PackageReady;
+    gLastWindowOpen = mOta.UpdateWindowOpen;
+  }
+}
+
+on start
+{
+  gConnType = 0;
+  gConnState = 0;
+  gSignalBars = 0;
+  gIviCpuLoad = 0;
+  gIviMemLoad = 0;
+  gTmuServiceMode = 0;
+  gDriveState = 0;
+  gDownloadPercent = 0;
+  gConnRxMs = 0;
+  gIviHealthRxMs = 0;
+  gTmuServiceRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastConnInputStale = 0;
+  gLastIviHealthInputStale = 0;
+  gLastTmuInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastSessionState = -1;
+  gLastPackageReady = -1;
+  gLastWindowOpen = -1;
+  setTimer(tOtaCycle, 100);
+  write("[OTA] start");
+}
+
+on timer tOtaCycle
+{
+  publishOtaState();
+  setTimer(tOtaCycle, 100);
+}
+
+on message frmConnectivityStateMsg
+{
+  gConnType = clampRange((int)this.ConnectivityType, 0, 7);
+  gConnState = clampRange((int)this.ConnectivityState, 0, 7);
+  gSignalBars = clampRange((int)this.SignalBars, 0, 15);
+  gConnRxMs = getSimulationTimeMs();
+}
+
+on message frmIviHealthDetailMsg
+{
+  gIviCpuLoad = clampRange((int)this.IviCpuLoad, 0, 100);
+  gIviMemLoad = clampRange((int)this.IviMemLoad, 0, 100);
+  gIviHealthRxMs = getSimulationTimeMs();
+}
+
+on message frmTmuServiceStateMsg
+{
+  gTmuServiceMode = clampRange((int)this.TmuServiceMode, 0, 3);
+  gTmuServiceRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tOtaCycle);
+}
+

@@ -1,0 +1,238 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tDoorRrCycle;
+  int gDoorControlCmd;
+  int gChildLockCmd;
+  int gDriveState;
+  int gDkeyAccessState;
+  int gKeyPresence;
+  int gImmobilizerState;
+  int gKeyAuthState;
+  dword gDoorCtrlRxMs;
+  dword gVehicleRxMs;
+  dword gDkeyRxMs;
+  dword gImmoRxMs;
+  int gLastDoorCtrlInputStale;
+  int gLastVehicleInputStale;
+  int gLastDkeyInputStale;
+  int gLastImmoInputStale;
+  int gLastLockState;
+  int gLastOpenState;
+  int gLastWindowPos;
+}
+
+void traceDoorRrInputHealth(int doorCtrlInputStale,
+                            int vehicleInputStale,
+                            int dkeyInputStale,
+                            int immoInputStale)
+{
+  if (doorCtrlInputStale != gLastDoorCtrlInputStale)
+  {
+    if (doorCtrlInputStale == 1)
+    {
+      write("[DOOR_RR] door-control input stale");
+    }
+    else
+    {
+      write("[DOOR_RR] door-control input restored");
+    }
+    gLastDoorCtrlInputStale = doorCtrlInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[DOOR_RR] vehicle input stale");
+    }
+    else
+    {
+      write("[DOOR_RR] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+
+  if (dkeyInputStale != gLastDkeyInputStale)
+  {
+    if (dkeyInputStale == 1)
+    {
+      write("[DOOR_RR] digital-key input stale");
+    }
+    else
+    {
+      write("[DOOR_RR] digital-key input restored");
+    }
+    gLastDkeyInputStale = dkeyInputStale;
+  }
+
+  if (immoInputStale != gLastImmoInputStale)
+  {
+    if (immoInputStale == 1)
+    {
+      write("[DOOR_RR] immobilizer input stale");
+    }
+    else
+    {
+      write("[DOOR_RR] immobilizer input restored");
+    }
+    gLastImmoInputStale = immoInputStale;
+  }
+}
+
+on start
+{
+  gDoorControlCmd = 0;
+  gChildLockCmd = 0;
+  gDriveState = 0;
+  gDkeyAccessState = 0;
+  gKeyPresence = 0;
+  gImmobilizerState = 1;
+  gKeyAuthState = 0;
+  gDoorCtrlRxMs = 0;
+  gVehicleRxMs = 0;
+  gDkeyRxMs = 0;
+  gImmoRxMs = 0;
+  gLastDoorCtrlInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastDkeyInputStale = 0;
+  gLastImmoInputStale = 0;
+  gLastLockState = -1;
+  gLastOpenState = -1;
+  gLastWindowPos = -1;
+  setTimer(tDoorRrCycle, 100);
+  write("[DOOR_RR] start");
+}
+
+on message frmDoorControlMsg
+{
+  gDoorControlCmd = clampRange((int)this.DoorControlCmd, 0, 3);
+  gChildLockCmd = clampRange((int)this.ChildLockCmd, 0, 3);
+  gDoorCtrlRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on message frmDigitalKeyStateMsg
+{
+  gDkeyAccessState = clampRange((int)this.VehicleAccessState, 0, 7);
+  gKeyPresence = clampRange((int)this.KeyPresence, 0, 1);
+  gDkeyRxMs = getSimulationTimeMs();
+}
+
+on message frmImmobilizerStateMsg
+{
+  gImmobilizerState = clampRange((int)this.ImmobilizerState, 0, 3);
+  gKeyAuthState = clampRange((int)this.KeyAuthState, 0, 3);
+  gImmoRxMs = getSimulationTimeMs();
+}
+
+on timer tDoorRrCycle
+{
+  message frmDoorRrStateMsg mDoor;
+  int doorCtrlInputStale;
+  int vehicleInputStale;
+  int dkeyInputStale;
+  int immoInputStale;
+  int driveState;
+  int accessAuthorized;
+  int unlockRequest;
+  int childLockActive;
+  int lockState;
+  int openState;
+  int windowPos;
+  int manualMode;
+
+  manualMode = (((int)@Test::scenarioActiveId) == 0) ? 1 : 0;
+  doorCtrlInputStale = (ethIsRecentTick(gDoorCtrlRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  dkeyInputStale = (ethIsRecentTick(gDkeyRxMs, 300) == 1) ? 0 : 1;
+  immoInputStale = (ethIsRecentTick(gImmoRxMs, 300) == 1) ? 0 : 1;
+  if (manualMode == 1)
+  {
+    vehicleInputStale = 0;
+  }
+  traceDoorRrInputHealth(doorCtrlInputStale, vehicleInputStale, dkeyInputStale, immoInputStale);
+
+  if (manualMode == 1)
+  {
+    driveState = clampRange((int)@Chassis::driveState, 0, 3);
+  }
+  else
+  {
+    driveState = gDriveState;
+  }
+  if (manualMode != 1 && vehicleInputStale == 1)
+  {
+    driveState = 3;
+  }
+
+  accessAuthorized = 0;
+  if (driveState == 0)
+  {
+    if (dkeyInputStale == 0 &&
+        gKeyPresence == 1 &&
+        gDkeyAccessState >= 1)
+    {
+      accessAuthorized = 1;
+    }
+    if (immoInputStale == 0 &&
+        gImmobilizerState >= 1 &&
+        gKeyAuthState >= 1)
+    {
+      accessAuthorized = 1;
+    }
+  }
+
+  unlockRequest = 0;
+  if (doorCtrlInputStale == 0 && gDoorControlCmd > 0)
+  {
+    unlockRequest = 1;
+  }
+  childLockActive = (doorCtrlInputStale == 0 && gChildLockCmd > 0) ? 1 : 0;
+
+  lockState = 1;
+  openState = 0;
+  windowPos = 0;
+  if (accessAuthorized == 1 && unlockRequest == 1 && childLockActive == 0)
+  {
+    lockState = 0;
+  }
+
+  mDoor.DoorRrLockState = clampRange(lockState, 0, 3);
+  mDoor.DoorRrOpenState = clampRange(openState, 0, 1);
+  mDoor.DoorRrWindowPos = clampRange(windowPos, 0, 100);
+  output(mDoor);
+
+  if (mDoor.DoorRrLockState != gLastLockState ||
+      mDoor.DoorRrOpenState != gLastOpenState ||
+      mDoor.DoorRrWindowPos != gLastWindowPos)
+  {
+    write("[DOOR_RR] lock=%d open=%d win=%d cmd=%d child=%d drive=%d auth=%d",
+          mDoor.DoorRrLockState,
+          mDoor.DoorRrOpenState,
+          mDoor.DoorRrWindowPos,
+          gDoorControlCmd,
+          childLockActive,
+          driveState,
+          accessAuthorized);
+    gLastLockState = mDoor.DoorRrLockState;
+    gLastOpenState = mDoor.DoorRrOpenState;
+    gLastWindowPos = mDoor.DoorRrWindowPos;
+  }
+
+  setTimer(tDoorRrCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tDoorRrCycle);
+}

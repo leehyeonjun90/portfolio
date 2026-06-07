@@ -1,0 +1,208 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tTailgateCycle;
+  int gDriveState;
+  int gAssistMode;
+  int gOpenRequestState;
+  int gActuatorCmd;
+  int gDkeyAccessState;
+  int gKeyPresence;
+  dword gVehicleRxMs;
+  dword gCtrlRxMs;
+  dword gDkeyRxMs;
+  int gLastVehicleInputStale;
+  int gLastCtrlInputStale;
+  int gLastDkeyInputStale;
+  int gLastLockState;
+  int gLastOpenState;
+  int gLastPowerState;
+  int gLastPosition;
+}
+
+void traceTgmInputHealth(int vehicleInputStale, int ctrlInputStale, int dkeyInputStale)
+{
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[TGM] vehicle input stale");
+    }
+    else
+    {
+      write("[TGM] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+
+  if (ctrlInputStale != gLastCtrlInputStale)
+  {
+    if (ctrlInputStale == 1)
+    {
+      write("[TGM] tailgate-control input stale");
+    }
+    else
+    {
+      write("[TGM] tailgate-control input restored");
+    }
+    gLastCtrlInputStale = ctrlInputStale;
+  }
+
+  if (dkeyInputStale != gLastDkeyInputStale)
+  {
+    if (dkeyInputStale == 1)
+    {
+      write("[TGM] digital-key input stale");
+    }
+    else
+    {
+      write("[TGM] digital-key input restored");
+    }
+    gLastDkeyInputStale = dkeyInputStale;
+  }
+}
+
+on start
+{
+  gDriveState = 0;
+  gAssistMode = 0;
+  gOpenRequestState = 0;
+  gActuatorCmd = 0;
+  gDkeyAccessState = 0;
+  gKeyPresence = 0;
+  gVehicleRxMs = 0;
+  gCtrlRxMs = 0;
+  gDkeyRxMs = 0;
+  gLastVehicleInputStale = 0;
+  gLastCtrlInputStale = 0;
+  gLastDkeyInputStale = 0;
+  gLastLockState = -1;
+  gLastOpenState = -1;
+  gLastPowerState = -1;
+  gLastPosition = -1;
+  setTimer(tTailgateCycle, 100);
+  write("[TGM] start");
+}
+
+on message frmVehicleStateCanMsg
+{
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on message frmPowerTailgateCtrlStateMsg
+{
+  gAssistMode = clampRange((int)this.TailgateAssistMode, 0, 7);
+  gOpenRequestState = clampRange((int)this.OpenRequestState, 0, 3);
+  gActuatorCmd = clampRange((int)this.TailgateActuatorCmd, 0, 100);
+  gCtrlRxMs = getSimulationTimeMs();
+}
+
+on message frmDigitalKeyStateMsg
+{
+  gDkeyAccessState = clampRange((int)this.VehicleAccessState, 0, 7);
+  gKeyPresence = clampRange((int)this.KeyPresence, 0, 1);
+  gDkeyRxMs = getSimulationTimeMs();
+}
+
+on timer tTailgateCycle
+{
+  message frmTailgateStateMsg mTailgate;
+  int vehicleInputStale;
+  int ctrlInputStale;
+  int dkeyInputStale;
+  int driveState;
+  int manualMode;
+  int accessAuthorized;
+  int lockState;
+  int openState;
+  int powerState;
+  int position;
+
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  ctrlInputStale = (ethIsRecentTick(gCtrlRxMs, 300) == 1) ? 0 : 1;
+  dkeyInputStale = (ethIsRecentTick(gDkeyRxMs, 300) == 1) ? 0 : 1;
+  traceTgmInputHealth(vehicleInputStale, ctrlInputStale, dkeyInputStale);
+
+  driveState = gDriveState;
+  manualMode = (((int)@Test::scenarioActiveId) == 0) ? 1 : 0;
+  if (vehicleInputStale == 1)
+  {
+    driveState = 3;
+  }
+
+  accessAuthorized = 0;
+  if (manualMode == 0 &&
+      driveState == 0 &&
+      dkeyInputStale == 0 &&
+      gKeyPresence == 1 &&
+      gDkeyAccessState >= 1)
+  {
+    accessAuthorized = 1;
+  }
+
+  lockState = 1;
+  openState = 0;
+  powerState = 0;
+  position = 0;
+  if (accessAuthorized == 1 && ctrlInputStale == 0)
+  {
+    lockState = 0;
+    powerState = (gAssistMode > 0) ? 1 : 0;
+    if (gOpenRequestState > 0)
+    {
+      openState = 1;
+      if (gActuatorCmd > 0)
+      {
+        position = gActuatorCmd;
+      }
+      else
+      {
+        position = 60;
+      }
+    }
+    else if (gActuatorCmd > 0)
+    {
+      position = gActuatorCmd;
+      openState = (gActuatorCmd >= 10) ? 1 : 0;
+    }
+  }
+
+  mTailgate.TailgateLockState = clampRange(lockState, 0, 3);
+  mTailgate.TailgateOpenState = clampRange(openState, 0, 1);
+  mTailgate.TailgatePowerState = clampRange(powerState, 0, 3);
+  mTailgate.TailgatePosition = clampRange(position, 0, 100);
+  output(mTailgate);
+
+  if (mTailgate.TailgateLockState != gLastLockState ||
+      mTailgate.TailgateOpenState != gLastOpenState ||
+      mTailgate.TailgatePowerState != gLastPowerState ||
+      mTailgate.TailgatePosition != gLastPosition)
+  {
+    write("[TGM] lock=%d open=%d power=%d pos=%d mode=%d req=%d cmd=%d auth=%d drive=%d",
+          mTailgate.TailgateLockState,
+          mTailgate.TailgateOpenState,
+          mTailgate.TailgatePowerState,
+          mTailgate.TailgatePosition,
+          gAssistMode,
+          gOpenRequestState,
+          gActuatorCmd,
+          accessAuthorized,
+          driveState);
+    gLastLockState = mTailgate.TailgateLockState;
+    gLastOpenState = mTailgate.TailgateOpenState;
+    gLastPowerState = mTailgate.TailgatePowerState;
+    gLastPosition = mTailgate.TailgatePosition;
+  }
+
+  setTimer(tTailgateCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tTailgateCycle);
+}

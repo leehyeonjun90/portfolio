@@ -1,0 +1,237 @@
+/*@!Encoding:949*/
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tVsmCycle;
+  int gEscCtrlState;
+  int gEscIntervention;
+  int gAebArmed;
+  int gAebStopReq;
+  int gAebDecelProfile;
+  int gAebDomainHealth;
+  int gAebSelectedAlertLevel;
+  int gVehicleSpeed;
+  dword gEscRxMs;
+  dword gAebRxMs;
+  dword gVehicleRxMs;
+  int gLastEscInputStale;
+  int gLastAebInputStale;
+  int gLastVehicleInputStale;
+  int gLastCtrlState;
+  int gLastAlertLevel;
+  int gLastIntervention;
+}
+
+void traceVsmInputHealth(int escInputStale, int aebInputStale, int vehicleInputStale)
+{
+  if (escInputStale != gLastEscInputStale)
+  {
+    if (escInputStale == 1)
+    {
+      write("[VSM] esc input stale");
+    }
+    else
+    {
+      write("[VSM] esc input restored");
+    }
+    gLastEscInputStale = escInputStale;
+  }
+
+  if (aebInputStale != gLastAebInputStale)
+  {
+    if (aebInputStale == 1)
+    {
+      write("[VSM] aeb input stale");
+    }
+    else
+    {
+      write("[VSM] aeb input restored");
+    }
+    gLastAebInputStale = aebInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[VSM] vehicle input stale");
+    }
+    else
+    {
+      write("[VSM] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+on start
+{
+  gEscCtrlState = 0;
+  gEscIntervention = 0;
+  gAebArmed = 0;
+  gAebStopReq = 0;
+  gAebDecelProfile = 0;
+  gAebDomainHealth = 2;
+  gAebSelectedAlertLevel = 0;
+  gVehicleSpeed = 0;
+  gEscRxMs = 0;
+  gAebRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastEscInputStale = 0;
+  gLastAebInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastCtrlState = -1;
+  gLastAlertLevel = -1;
+  gLastIntervention = -1;
+  setTimer(tVsmCycle, 100);
+  write("[VSM] start");
+}
+
+on message frmEscStateMsg
+{
+  gEscCtrlState = clampRange((int)this.EscCtrlState, 0, 7);
+  gEscIntervention = clampRange((int)this.EscIntervention, 0, 255);
+  gEscRxMs = getSimulationTimeMs();
+}
+
+on message frmAebDomainStateMsg
+{
+  gAebArmed = clampRange((int)this.AebArmed, 0, 1);
+  gAebStopReq = clampRange((int)this.StopReq, 0, 1);
+  gAebDecelProfile = clampRange((int)this.DecelProfile, 0, 3);
+  gAebDomainHealth = clampRange((int)this.DomainHealth, 0, 3);
+  gAebSelectedAlertLevel = clampRange((int)this.SelectedAlertLevel, 0, 7);
+  gAebRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on timer tVsmCycle
+{
+  message frmVsmStateMsg mVsm;
+  int escInputStale;
+  int aebInputStale;
+  int vehicleInputStale;
+  int ctrlState;
+  int alertLevel;
+  int intervention;
+  int escCtrlState;
+  int escIntervention;
+  int aebArmed;
+  int aebStopReq;
+  int aebDecelProfile;
+  int aebDomainHealth;
+  int speed;
+
+  escInputStale = (ethIsRecentTick(gEscRxMs, 300) == 1) ? 0 : 1;
+  aebInputStale = (ethIsRecentTick(gAebRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  traceVsmInputHealth(escInputStale, aebInputStale, vehicleInputStale);
+
+  escCtrlState = gEscCtrlState;
+  escIntervention = gEscIntervention;
+  aebArmed = gAebArmed;
+  aebStopReq = gAebStopReq;
+  aebDecelProfile = gAebDecelProfile;
+  aebDomainHealth = gAebDomainHealth;
+  speed = gVehicleSpeed;
+  if (escInputStale == 1)
+  {
+    escCtrlState = 0;
+    escIntervention = 0;
+  }
+  if (aebInputStale == 1)
+  {
+    aebArmed = 0;
+    aebStopReq = 0;
+    aebDecelProfile = 0;
+    aebDomainHealth = 1;
+  }
+  if (vehicleInputStale == 1)
+  {
+    speed = 0;
+  }
+
+  ctrlState = 1;
+  if (aebDomainHealth <= 0)
+  {
+    ctrlState = 3;
+  }
+  else if (escInputStale == 1 ||
+           aebInputStale == 1 ||
+           vehicleInputStale == 1 ||
+           aebDomainHealth == 1 ||
+           escCtrlState >= 1 ||
+           aebArmed == 1)
+  {
+    ctrlState = 2;
+  }
+
+  alertLevel = gAebSelectedAlertLevel;
+  if (aebInputStale == 1)
+  {
+    alertLevel = 0;
+  }
+  if (alertLevel == 0 && escIntervention > 0)
+  {
+    alertLevel = (escIntervention >= 20) ? 3 : 2;
+  }
+
+  intervention = escIntervention;
+  if (aebStopReq == 1)
+  {
+    intervention = 60;
+  }
+  else if (aebDecelProfile == 3 && intervention < 50)
+  {
+    intervention = 50;
+  }
+  else if (aebDecelProfile == 2 && intervention < 35)
+  {
+    intervention = 35;
+  }
+  else if (aebDecelProfile == 1 && intervention < 20)
+  {
+    intervention = 20;
+  }
+
+  mVsm.VsmCtrlState = clampRange(ctrlState, 0, 7);
+  mVsm.VsmAlertLevel = clampRange(alertLevel, 0, 7);
+  mVsm.VsmIntervention = clampRange(intervention, 0, 255);
+  output(mVsm);
+
+  if (mVsm.VsmCtrlState != gLastCtrlState ||
+      mVsm.VsmAlertLevel != gLastAlertLevel ||
+      mVsm.VsmIntervention != gLastIntervention)
+  {
+    write("[VSM] state=%d alert=%d intervention=%d esc=%d/%d aeb=%d/%d/%d health=%d speed=%d",
+          mVsm.VsmCtrlState,
+          mVsm.VsmAlertLevel,
+          mVsm.VsmIntervention,
+          escCtrlState,
+          escIntervention,
+          aebArmed,
+          aebStopReq,
+          aebDecelProfile,
+          aebDomainHealth,
+          speed);
+    gLastCtrlState = mVsm.VsmCtrlState;
+    gLastAlertLevel = mVsm.VsmAlertLevel;
+    gLastIntervention = mVsm.VsmIntervention;
+  }
+
+  setTimer(tVsmCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tVsmCycle);
+}

@@ -1,0 +1,165 @@
+﻿includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tFpcmCycle;
+  int gBatterySoc;
+  int gChargingState;
+  int gEngineTorque;
+  int gDriveState;
+  int gVehicleSpeed;
+  dword gFuelBatteryRxMs;
+  dword gVehicleRxMs;
+  int gLastState;
+  int gLastDuty;
+  int gLastPressure;
+  int gLastInputStale;
+  int gLastVehicleInputStale;
+}
+
+on start
+{
+  gBatterySoc = 95;
+  gChargingState = 0;
+  gEngineTorque = 0;
+  gDriveState = 0;
+  gVehicleSpeed = 0;
+  gFuelBatteryRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastState = -1;
+  gLastDuty = -1;
+  gLastPressure = -1;
+  gLastInputStale = 1;
+  gLastVehicleInputStale = 1;
+  setTimer(tFpcmCycle, 100);
+  write("[FPCM] start");
+}
+
+on message frmFuelBatteryStateMsg
+{
+  gBatterySoc = clampRange((int)this.BatterySoc, 0, 100);
+  gChargingState = clampRange((int)this.ChargingState, 0, 3);
+  gFuelBatteryRxMs = getSimulationTimeMs();
+}
+
+on message frmEngineTorqueMsg
+{
+  gEngineTorque = clampRange((int)this.EngineTorqueAct, 0, 65535);
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on timer tFpcmCycle
+{
+  message frmFpcmStateMsg mFpcm;
+  int driveState;
+  int speed;
+  int inputStale;
+  int vehicleInputStale;
+  int batterySoc;
+  int chargingState;
+  int state;
+  int duty;
+  int pressure;
+  inputStale = 1;
+  if (gFuelBatteryRxMs != 0 &&
+      (getSimulationTimeMs() - gFuelBatteryRxMs) <= 300)
+  {
+    inputStale = 0;
+  }
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+
+  batterySoc = gBatterySoc;
+  chargingState = gChargingState;
+  driveState = gDriveState;
+  speed = gVehicleSpeed;
+  if (inputStale == 1)
+  {
+    batterySoc = 50;
+    chargingState = 0;
+  }
+  if (vehicleInputStale == 1)
+  {
+    driveState = 3;
+    speed = 0;
+  }
+
+  if (inputStale != gLastInputStale)
+  {
+    if (inputStale == 1)
+    {
+      write("[FPCM] fuel-battery input stale");
+    }
+    else
+    {
+      write("[FPCM] fuel-battery input restored");
+    }
+    gLastInputStale = inputStale;
+  }
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[FPCM] vehicle input stale");
+    }
+    else
+    {
+      write("[FPCM] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+
+  if (driveState > 0 || gEngineTorque > 20)
+  {
+    state = 2;
+    duty = 35 + (gEngineTorque / 6) + (speed / 12);
+  }
+  else if (chargingState == 2 || batterySoc < 25)
+  {
+    state = 1;
+    duty = 25;
+  }
+  else
+  {
+    state = 0;
+    duty = 0;
+  }
+
+  duty = clampRange(duty, 0, 100);
+  pressure = (state == 0) ? 0 : clampRange(120 + (duty * 2), 0, 255);
+
+  mFpcm.FpcmState = clampRange(state, 0, 7);
+  mFpcm.PumpDuty = duty;
+  mFpcm.LinePressure = pressure;
+  output(mFpcm);
+
+  if (mFpcm.FpcmState != gLastState ||
+      mFpcm.PumpDuty != gLastDuty ||
+      mFpcm.LinePressure != gLastPressure)
+  {
+    write("[FPCM] state=%d duty=%d pressure=%d soc=%d torque=%d",
+          mFpcm.FpcmState,
+          mFpcm.PumpDuty,
+          mFpcm.LinePressure,
+          batterySoc,
+          gEngineTorque);
+    gLastState = mFpcm.FpcmState;
+    gLastDuty = mFpcm.PumpDuty;
+    gLastPressure = mFpcm.LinePressure;
+  }
+
+  setTimer(tFpcmCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tFpcmCycle);
+}

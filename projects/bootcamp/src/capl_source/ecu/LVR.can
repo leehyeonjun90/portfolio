@@ -1,0 +1,165 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tLvrCycle;
+  int gGearInput;
+  int gGearState;
+  int gIgnitionState;
+  dword gGearRxMs;
+  dword gIgnitionRxMs;
+  int gLastGearInputStale;
+  int gLastIgnitionInputStale;
+  int gLastPosition;
+  int gLastValid;
+  int gLastParkLock;
+}
+
+int deriveManualGearStateFromDriveState(int driveState)
+{
+  driveState = clampRange(driveState, 0, 3);
+  if (driveState == 1)
+  {
+    return 1;
+  }
+  if (driveState == 2)
+  {
+    return 2;
+  }
+  if (driveState >= 3)
+  {
+    return 3;
+  }
+  return 0;
+}
+
+void traceLvrInputHealth(int gearInputStale, int ignitionInputStale)
+{
+  if (gearInputStale != gLastGearInputStale)
+  {
+    if (gearInputStale == 1)
+    {
+      write("[LVR] gear input stale");
+    }
+    else
+    {
+      write("[LVR] gear input restored");
+    }
+    gLastGearInputStale = gearInputStale;
+  }
+
+  if (ignitionInputStale != gLastIgnitionInputStale)
+  {
+    if (ignitionInputStale == 1)
+    {
+      write("[LVR] ignition input stale");
+    }
+    else
+    {
+      write("[LVR] ignition input restored");
+    }
+    gLastIgnitionInputStale = ignitionInputStale;
+  }
+}
+
+on start
+{
+  gGearInput = 0;
+  gGearState = 0;
+  gIgnitionState = 0;
+  gGearRxMs = 0;
+  gIgnitionRxMs = 0;
+  gLastGearInputStale = 0;
+  gLastIgnitionInputStale = 0;
+  gLastPosition = -1;
+  gLastValid = -1;
+  gLastParkLock = -1;
+  setTimer(tLvrCycle, 100);
+  write("[LVR] start");
+}
+
+on message frmGearStateMsg
+{
+  gGearInput = clampRange((int)this.GearInput, 0, 7);
+  gGearState = clampRange((int)this.GearState, 0, 7);
+  gGearRxMs = getSimulationTimeMs();
+}
+
+on message frmIgnitionEngineMsg
+{
+  gIgnitionState = clampRange((int)this.IgnitionState, 0, 1);
+  gIgnitionRxMs = getSimulationTimeMs();
+}
+
+on timer tLvrCycle
+{
+  message frmLvrStateMsg mLvr;
+  int gearInputStale;
+  int ignitionInputStale;
+  int gearInput;
+  int gearState;
+  int ignitionState;
+  int manualMode;
+  int leverValid;
+  int parkLockCmd;
+
+  gearInputStale = (ethIsRecentTick(gGearRxMs, 300) == 1) ? 0 : 1;
+  ignitionInputStale = (ethIsRecentTick(gIgnitionRxMs, 300) == 1) ? 0 : 1;
+  traceLvrInputHealth(gearInputStale, ignitionInputStale);
+
+  gearInput = gGearInput;
+  gearState = gGearState;
+  ignitionState = gIgnitionState;
+  manualMode = (((int)@Test::scenarioActiveId) == 0) ? 1 : 0;
+  if (gearInputStale == 1)
+  {
+    gearInput = 0;
+    gearState = 0;
+  }
+  if (ignitionInputStale == 1)
+  {
+    ignitionState = 0;
+  }
+
+  if (manualMode == 1)
+  {
+    gearInput = deriveManualGearStateFromDriveState((int)@Chassis::driveState);
+    gearState = gearInput;
+    ignitionState = ((((int)@Chassis::ignitionCmd) > 0) ||
+                     gearState > 0 ||
+                     ((int)@Chassis::vehicleSpeed > 0)) ? 1 : 0;
+  }
+
+  leverValid = (ignitionState == 1) ? 1 : 0;
+  parkLockCmd = ((gearState == 0) && (ignitionState == 0)) ? 1 : 0;
+
+  mLvr.LeverPosition = gearInput;
+  mLvr.LeverValid = leverValid;
+  mLvr.ParkLockCmd = parkLockCmd;
+  mLvr.LeverState = gearState;
+  output(mLvr);
+
+  if (mLvr.LeverPosition != gLastPosition ||
+      mLvr.LeverValid != gLastValid ||
+      mLvr.ParkLockCmd != gLastParkLock)
+  {
+    write("[LVR] pos=%d state=%d valid=%d park=%d",
+          mLvr.LeverPosition,
+          mLvr.LeverState,
+          mLvr.LeverValid,
+          mLvr.ParkLockCmd);
+    gLastPosition = mLvr.LeverPosition;
+    gLastValid = mLvr.LeverValid;
+    gLastParkLock = mLvr.ParkLockCmd;
+  }
+
+  setTimer(tLvrCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tLvrCycle);
+}

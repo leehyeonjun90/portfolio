@@ -1,0 +1,210 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tParkUltrasonicCycle;
+  int gVehicleSpeed;
+  int gSteeringInput;
+  int gBrakePressed;
+  dword gVehicleRxMs;
+  dword gSteeringRxMs;
+  dword gBrakeRxMs;
+  int gLastVehicleInputStale;
+  int gLastSteeringInputStale;
+  int gLastBrakeInputStale;
+  int gLastActive;
+  int gLastDistance;
+  int gLastZoneMask;
+  int gLastAudibleWarn;
+}
+
+void traceParkInputHealth(int vehicleInputStale, int steeringInputStale, int brakeInputStale)
+{
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[PUS] vehicle input stale");
+    }
+    else
+    {
+      write("[PUS] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+
+  if (steeringInputStale != gLastSteeringInputStale)
+  {
+    if (steeringInputStale == 1)
+    {
+      write("[PUS] steering input stale");
+    }
+    else
+    {
+      write("[PUS] steering input restored");
+    }
+    gLastSteeringInputStale = steeringInputStale;
+  }
+
+  if (brakeInputStale != gLastBrakeInputStale)
+  {
+    if (brakeInputStale == 1)
+    {
+      write("[PUS] brake input stale");
+    }
+    else
+    {
+      write("[PUS] brake input restored");
+    }
+    gLastBrakeInputStale = brakeInputStale;
+  }
+}
+
+void publishParkUltrasonicState()
+{
+  message frmParkUltrasonicStateMsg mPark;
+  int vehicleInputStale;
+  int steeringInputStale;
+  int brakeInputStale;
+  int vehicleSpeed;
+  int brakePedal;
+  int steeringInput;
+  int active;
+  int minDistance;
+  int zoneMask;
+  int audibleWarn;
+
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  steeringInputStale = (ethIsRecentTick(gSteeringRxMs, 300) == 1) ? 0 : 1;
+  brakeInputStale = (ethIsRecentTick(gBrakeRxMs, 300) == 1) ? 0 : 1;
+  traceParkInputHealth(vehicleInputStale, steeringInputStale, brakeInputStale);
+
+  vehicleSpeed = gVehicleSpeed;
+  brakePedal = gBrakePressed;
+  steeringInput = gSteeringInput;
+  if (vehicleInputStale == 1)
+  {
+    vehicleSpeed = 0;
+  }
+  if (steeringInputStale == 1)
+  {
+    steeringInput = 0;
+  }
+  if (brakeInputStale == 1)
+  {
+    brakePedal = 0;
+  }
+
+  /* Keep park assist passive at manual idle.
+     Only raise the feature when the driver is actually braking or steering
+     in a low-speed parking context. */
+  active = (vehicleInputStale == 0 &&
+            vehicleSpeed <= 15 &&
+            (brakePedal == 1 || steeringInput == 1)) ? 1 : 0;
+  minDistance = 255;
+  zoneMask = 0;
+  audibleWarn = 0;
+
+  if (active == 1)
+  {
+    if (vehicleSpeed <= 3)
+    {
+      minDistance = 28;
+    }
+    else if (vehicleSpeed <= 5)
+    {
+      minDistance = 35;
+    }
+    else
+    {
+      minDistance = 80;
+    }
+    if (brakePedal == 1)
+    {
+      zoneMask = zoneMask | 0x01;
+    }
+    if (steeringInput == 1)
+    {
+      zoneMask = zoneMask | 0x02;
+    }
+    if (vehicleSpeed <= 3)
+    {
+      audibleWarn = 1;
+    }
+  }
+
+  mPark.ParkAssistActive = active;
+  mPark.MinDistanceCm = minDistance;
+  mPark.ZoneMask = zoneMask;
+  mPark.AudibleWarn = audibleWarn;
+  output(mPark);
+
+  if (active != gLastActive ||
+      minDistance != gLastDistance ||
+      zoneMask != gLastZoneMask ||
+      audibleWarn != gLastAudibleWarn)
+  {
+    write("[PUS] active=%d dist=%d zone=0x%02X warn=%d speed=%d",
+          active,
+          minDistance,
+          zoneMask,
+          audibleWarn,
+          vehicleSpeed);
+    gLastActive = active;
+    gLastDistance = minDistance;
+    gLastZoneMask = zoneMask;
+    gLastAudibleWarn = audibleWarn;
+  }
+}
+
+on start
+{
+  gVehicleSpeed = 0;
+  gSteeringInput = 0;
+  gBrakePressed = 0;
+  gVehicleRxMs = 0;
+  gSteeringRxMs = 0;
+  gBrakeRxMs = 0;
+  gLastVehicleInputStale = 0;
+  gLastSteeringInputStale = 0;
+  gLastBrakeInputStale = 0;
+  gLastActive = -1;
+  gLastDistance = -1;
+  gLastZoneMask = -1;
+  gLastAudibleWarn = -1;
+  setTimer(tParkUltrasonicCycle, 100);
+  write("[PUS] start");
+}
+
+on timer tParkUltrasonicCycle
+{
+  publishParkUltrasonicState();
+  setTimer(tParkUltrasonicCycle, 100);
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on message frmSteeringStateCanMsg
+{
+  gSteeringInput = clampRange((int)this.SteeringState, 0, 1);
+  gSteeringRxMs = getSimulationTimeMs();
+}
+
+on message frmBrakeStatusMsg
+{
+  gBrakePressed = ((((int)this.BrakeMode) > 0) || (((int)this.BrakePressure) > 0)) ? 1 : 0;
+  gBrakeRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tParkUltrasonicCycle);
+}
+

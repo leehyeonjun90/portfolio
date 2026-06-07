@@ -1,0 +1,152 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tPgsCycle;
+  int gParkActive;
+  int gMinDistance;
+  int gZoneMask;
+  int gVehicleSpeed;
+  dword gParkAssistRxMs;
+  dword gVehicleRxMs;
+  int gLastParkAssistInputStale;
+  int gLastVehicleInputStale;
+  int gLastActive;
+  int gLastGuide;
+  int gLastQuality;
+}
+
+void tracePgsInputHealth(int parkAssistInputStale, int vehicleInputStale)
+{
+  if (parkAssistInputStale != gLastParkAssistInputStale)
+  {
+    if (parkAssistInputStale == 1)
+    {
+      write("[PGS] park-ultrasonic input stale");
+    }
+    else
+    {
+      write("[PGS] park-ultrasonic input restored");
+    }
+    gLastParkAssistInputStale = parkAssistInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[PGS] vehicle input stale");
+    }
+    else
+    {
+      write("[PGS] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+on start
+{
+  gParkActive = 0;
+  gMinDistance = 255;
+  gZoneMask = 0;
+  gVehicleSpeed = 0;
+  gParkAssistRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastParkAssistInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastActive = -1;
+  gLastGuide = -1;
+  gLastQuality = -1;
+  setTimer(tPgsCycle, 100);
+  write("[PGS] start");
+}
+
+on message frmParkUltrasonicStateMsg
+{
+  gParkActive = clampRange((int)this.ParkAssistActive, 0, 1);
+  gMinDistance = clampRange((int)this.MinDistanceCm, 0, 255);
+  gZoneMask = clampRange((int)this.ZoneMask, 0, 255);
+  gParkAssistRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on timer tPgsCycle
+{
+  message frmPgsStateMsg mPgs;
+  int parkAssistInputStale;
+  int vehicleInputStale;
+  int speed;
+  int parkActive;
+  int minDistance;
+  int zoneMask;
+  int guideMode;
+  int quality;
+
+  parkAssistInputStale = (ethIsRecentTick(gParkAssistRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  tracePgsInputHealth(parkAssistInputStale, vehicleInputStale);
+
+  speed = gVehicleSpeed;
+  parkActive = gParkActive;
+  minDistance = gMinDistance;
+  zoneMask = gZoneMask;
+  if (vehicleInputStale == 1)
+  {
+    speed = 0;
+    parkActive = 0;
+  }
+  if (parkAssistInputStale == 1)
+  {
+    parkActive = 0;
+    minDistance = 255;
+    zoneMask = 0;
+  }
+
+  guideMode = 0;
+  if (parkActive == 1)
+  {
+    guideMode = (zoneMask > 0) ? 2 : 1;
+  }
+  quality = (parkActive == 1) ? clampRange(100 - (minDistance / 2), 0, 100) : 0;
+  if (speed > 15)
+  {
+    quality = 0;
+    guideMode = 0;
+  }
+
+  mPgs.PgsActive = (guideMode > 0) ? 1 : 0;
+  mPgs.GuideMode = clampRange(guideMode, 0, 3);
+  mPgs.TrajectoryQuality = clampRange(quality, 0, 100);
+  output(mPgs);
+
+  if (mPgs.PgsActive != gLastActive ||
+      mPgs.GuideMode != gLastGuide ||
+      mPgs.TrajectoryQuality != gLastQuality)
+  {
+    write("[PGS] active=%d guide=%d quality=%d dist=%d speed=%d",
+          mPgs.PgsActive,
+          mPgs.GuideMode,
+          mPgs.TrajectoryQuality,
+          minDistance,
+          speed);
+    gLastActive = mPgs.PgsActive;
+    gLastGuide = mPgs.GuideMode;
+    gLastQuality = mPgs.TrajectoryQuality;
+  }
+
+  setTimer(tPgsCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tPgsCycle);
+}

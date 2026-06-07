@@ -1,0 +1,108 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tHeadlampLevelCycle;
+  int gAflsMode;
+  int gBeamPattern;
+  int gLevelStep;
+  dword gAflsStateRxMs;
+  int gLastAflsInputStale;
+  int gLastLevelStep;
+  int gLastLevelMode;
+  int gLastCompState;
+}
+
+void traceHlmInputHealth(int aflsInputStale)
+{
+  if (aflsInputStale != gLastAflsInputStale)
+  {
+    if (aflsInputStale == 1)
+    {
+      write("[HLM] afls input stale");
+    }
+    else
+    {
+      write("[HLM] afls input restored");
+    }
+    gLastAflsInputStale = aflsInputStale;
+  }
+}
+
+on start
+{
+  gAflsMode = 0;
+  gBeamPattern = 0;
+  gLevelStep = 0;
+  gAflsStateRxMs = 0;
+  gLastAflsInputStale = 0;
+  gLastLevelStep = -1;
+  gLastLevelMode = -1;
+  gLastCompState = -1;
+  setTimer(tHeadlampLevelCycle, 100);
+  write("[HLM] start");
+}
+
+on timer tHeadlampLevelCycle
+{
+  message frmHeadlampLevelStateMsg mLevel;
+  int aflsInputStale;
+  int aflsMode;
+  int beamPattern;
+  int levelStep;
+  int levelMode;
+  int compState;
+
+  aflsInputStale = (ethIsRecentTick(gAflsStateRxMs, 300) == 1) ? 0 : 1;
+  traceHlmInputHealth(aflsInputStale);
+
+  aflsMode = gAflsMode;
+  beamPattern = gBeamPattern;
+  levelStep = gLevelStep;
+  if (aflsInputStale == 1)
+  {
+    aflsMode = 0;
+    beamPattern = 0;
+    levelStep = 0;
+  }
+
+  levelMode = (aflsMode > 0) ? 1 : 0;
+  compState = (beamPattern >= 2) ? 1 : 0;
+
+  mLevel.HeadlampLevelStep = clampRange(levelStep, 0, 255);
+  mLevel.HeadlampLevelMode = clampRange(levelMode, 0, 7);
+  mLevel.LevelCompState = clampRange(compState, 0, 3);
+  output(mLevel);
+
+  if (mLevel.HeadlampLevelStep != gLastLevelStep ||
+      mLevel.HeadlampLevelMode != gLastLevelMode ||
+      mLevel.LevelCompState != gLastCompState)
+  {
+    write("[HLM] step=%d mode=%d comp=%d beam=%d",
+          mLevel.HeadlampLevelStep,
+          mLevel.HeadlampLevelMode,
+          mLevel.LevelCompState,
+          beamPattern);
+    gLastLevelStep = mLevel.HeadlampLevelStep;
+    gLastLevelMode = mLevel.HeadlampLevelMode;
+    gLastCompState = mLevel.LevelCompState;
+  }
+
+  setTimer(tHeadlampLevelCycle, 100);
+}
+
+on message frmAflsStateMsg
+{
+  gAflsMode = clampRange((int)this.AflsMode, 0, 7);
+  gBeamPattern = clampRange((int)this.BeamPattern, 0, 7);
+  gLevelStep = clampRange((int)this.LevelStep, 0, 255);
+  gAflsStateRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tHeadlampLevelCycle);
+}

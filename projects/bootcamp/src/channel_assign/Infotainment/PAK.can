@@ -1,0 +1,190 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tPaakCycle;
+  int gDkeyState;
+  int gDkeyAuth;
+  int gSignalBars;
+  int gDriveState;
+  dword gDkeyRxMs;
+  dword gTmuServiceRxMs;
+  dword gVehicleRxMs;
+  int gLastDkeyInputStale;
+  int gLastTmuInputStale;
+  int gLastVehicleInputStale;
+  int gLastState;
+  int gLastAuth;
+  int gLastProx;
+  int gLastLatency;
+}
+
+void tracePaakInputHealth(int dkeyInputStale, int tmuInputStale, int vehicleInputStale)
+{
+  if (dkeyInputStale != gLastDkeyInputStale)
+  {
+    if (dkeyInputStale == 1)
+    {
+      write("[PAK] digital-key input stale");
+    }
+    else
+    {
+      write("[PAK] digital-key input restored");
+    }
+    gLastDkeyInputStale = dkeyInputStale;
+  }
+
+  if (tmuInputStale != gLastTmuInputStale)
+  {
+    if (tmuInputStale == 1)
+    {
+      write("[PAK] tmu input stale");
+    }
+    else
+    {
+      write("[PAK] tmu input restored");
+    }
+    gLastTmuInputStale = tmuInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[PAK] vehicle input stale");
+    }
+    else
+    {
+      write("[PAK] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+on start
+{
+  gDkeyState = 0;
+  gDkeyAuth = 0;
+  gSignalBars = 0;
+  gDriveState = 0;
+  gDkeyRxMs = 0;
+  gTmuServiceRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastDkeyInputStale = 0;
+  gLastTmuInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastState = -1;
+  gLastAuth = -1;
+  gLastProx = -1;
+  gLastLatency = -1;
+  setTimer(tPaakCycle, 100);
+  write("[PAK] start");
+}
+
+on message frmDigitalKeyStateMsg
+{
+  gDkeyState = clampRange((int)this.DKeyState, 0, 7);
+  gDkeyAuth = clampRange((int)this.AuthMode, 0, 3);
+  gDkeyRxMs = getSimulationTimeMs();
+}
+
+on message frmTmuServiceStateMsg
+{
+  gSignalBars = clampRange((int)this.SignalBars, 0, 15);
+  gTmuServiceRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on timer tPaakCycle
+{
+  message frmPhoneAsKeyStateMsg mPaak;
+  int dkeyInputStale;
+  int tmuInputStale;
+  int vehicleInputStale;
+  int driveState;
+  int dkeyState;
+  int dkeyAuth;
+  int signalBars;
+  int proxState;
+  int latency;
+
+  dkeyInputStale = (ethIsRecentTick(gDkeyRxMs, 300) == 1) ? 0 : 1;
+  tmuInputStale = (ethIsRecentTick(gTmuServiceRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  tracePaakInputHealth(dkeyInputStale, tmuInputStale, vehicleInputStale);
+
+  driveState = gDriveState;
+  dkeyState = gDkeyState;
+  dkeyAuth = gDkeyAuth;
+  signalBars = gSignalBars;
+  if (dkeyInputStale == 1)
+  {
+    dkeyState = 0;
+    dkeyAuth = 0;
+  }
+  if (tmuInputStale == 1)
+  {
+    signalBars = 0;
+  }
+  if (vehicleInputStale == 1)
+  {
+    driveState = 3;
+  }
+
+  proxState = 0;
+  latency = 255;
+  if (dkeyInputStale == 0 && tmuInputStale == 0)
+  {
+    if (signalBars >= 2)
+    {
+      proxState = 1;
+    }
+    if (signalBars >= 4 && driveState == 0)
+    {
+      proxState = 2;
+    }
+    if (signalBars > 0)
+    {
+      latency = clampRange(200 - (signalBars * 30), 20, 255);
+    }
+  }
+
+  mPaak.PaakState = clampRange(dkeyState, 0, 7);
+  mPaak.AuthLevel = clampRange(dkeyAuth, 0, 3);
+  mPaak.ProximityState = clampRange(proxState, 0, 3);
+  mPaak.SyncLatency = latency;
+  output(mPaak);
+
+  if (mPaak.PaakState != gLastState ||
+      mPaak.AuthLevel != gLastAuth ||
+      mPaak.ProximityState != gLastProx ||
+      mPaak.SyncLatency != gLastLatency)
+  {
+    write("[PAK] state=%d auth=%d prox=%d latency=%d bars=%d",
+          mPaak.PaakState,
+          mPaak.AuthLevel,
+          mPaak.ProximityState,
+          mPaak.SyncLatency,
+          signalBars);
+    gLastState = mPaak.PaakState;
+    gLastAuth = mPaak.AuthLevel;
+    gLastProx = mPaak.ProximityState;
+    gLastLatency = mPaak.SyncLatency;
+  }
+
+  setTimer(tPaakCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tPaakCycle);
+}
+

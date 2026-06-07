@@ -1,0 +1,235 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tEthBackboneCycle;
+  int gIboxRouteState;
+  int gIboxSignalBars;
+  int gIboxServiceFlags;
+  int gSecuritySession;
+  int gAuthState;
+  int gSecurityFault;
+  int gNavSessionState;
+  int gNavRouteClass;
+  int gAlertLevel;
+  int gWarningPathStatus;
+  int gFailSafeMode;
+  dword gNavRxMs;
+  dword gNotifRxMs;
+  int gLastBackboneMode;
+  int gLastRouteHealth;
+  int gLastServiceHealth;
+  int gLastSecurityLevel;
+  int gLastActiveServices;
+  int gLastFaultBitmap;
+}
+
+void publishBackboneState()
+{
+  int backboneMode;
+  int diagStage;
+  int roadZoneActive;
+  int guidedRouteActive;
+  int routeHealth;
+  int serviceContext;
+  int serviceHealth;
+  int securityLevel;
+  int activeServices;
+  int faultBitmap;
+  int boundaryAlive;
+
+  roadZoneActive = (ethIsRecentTick(gNavRxMs, 300) == 1 &&
+                    (gNavSessionState > 0 || gNavRouteClass > 0)) ? 1 : 0;
+  guidedRouteActive = (ethIsRecentTick(gNavRxMs, 300) == 1 && gNavRouteClass == 3) ? 1 : 0;
+  boundaryAlive = clampRange((int)@CoreState::domainBoundaryStatus, 0, 1);
+  gWarningPathStatus = boundaryAlive == 1 ? clampRange((int)@CoreState::warningPathStatus, 0, 2) : 2;
+  gFailSafeMode = boundaryAlive == 1 ? clampRange((int)@Core::failSafeMode, 0, 2) : 2;
+  serviceContext = ethHasBoundaryServiceContext(roadZoneActive,
+                                                (ethIsRecentTick(gNotifRxMs, 300) == 1) ? gAlertLevel : 0);
+  diagStage = ethDiagBoundaryStage(roadZoneActive,
+                                   (ethIsRecentTick(gNotifRxMs, 300) == 1) ? gAlertLevel : 0,
+                                   boundaryAlive,
+                                   gWarningPathStatus,
+                                   gFailSafeMode);
+
+  gIboxRouteState = 0;
+  if (roadZoneActive == 1)
+  {
+    gIboxRouteState = 1;
+  }
+  if (guidedRouteActive == 1)
+  {
+    gIboxRouteState = 2;
+  }
+
+  gIboxSignalBars = 0;
+  if (serviceContext == 1)
+  {
+    gIboxSignalBars = 1;
+  }
+  if (diagStage == 2)
+  {
+    gIboxSignalBars = 3;
+  }
+  if (diagStage == 1)
+  {
+    gIboxSignalBars = 4;
+  }
+
+  gIboxServiceFlags = 0;
+  if (roadZoneActive == 1)
+  {
+    gIboxServiceFlags = gIboxServiceFlags | 1;
+  }
+  if (ethIsRecentTick(gNotifRxMs, 300) == 1 && gAlertLevel > 0)
+  {
+    gIboxServiceFlags = gIboxServiceFlags | 2;
+  }
+  if (diagStage >= 2)
+  {
+    gIboxServiceFlags = gIboxServiceFlags | 4;
+  }
+
+  gSecuritySession = 0;
+  if (serviceContext == 1)
+  {
+    gSecuritySession = 1;
+  }
+  if (diagStage == 1 && roadZoneActive == 1)
+  {
+    gSecuritySession = 2;
+  }
+  gAuthState = (serviceContext == 1) ? 1 : 0;
+  if (diagStage == 1)
+  {
+    gAuthState = 2;
+  }
+  gSecurityFault = ethDiagStageToSecurityFault(diagStage);
+
+  routeHealth = 0;
+  if (roadZoneActive == 1)
+  {
+    routeHealth = 1;
+  }
+  if (roadZoneActive == 1 && guidedRouteActive == 1 && diagStage == 1)
+  {
+    routeHealth = 2;
+  }
+
+  serviceHealth = 0;
+  if (serviceContext == 1)
+  {
+    serviceHealth = 1;
+  }
+  if (diagStage == 1 && (gIboxServiceFlags & 0x3) != 0)
+  {
+    serviceHealth = 2;
+  }
+
+  securityLevel = 0;
+  if (serviceContext == 1)
+  {
+    securityLevel = 1;
+  }
+  if (diagStage == 1)
+  {
+    securityLevel = 2;
+  }
+  else if (diagStage >= 2)
+  {
+    securityLevel = 3;
+  }
+
+  backboneMode = 1;
+  if (diagStage >= 2)
+  {
+    backboneMode = 2;
+  }
+  else if (diagStage == 1)
+  {
+    backboneMode = 3;
+  }
+
+  activeServices = 0;
+  if (gIboxSignalBars > 0) { activeServices = activeServices + 1; }
+  if (gSecuritySession > 0) { activeServices = activeServices + 1; }
+  if (gIboxServiceFlags > 0) { activeServices = activeServices + 1; }
+
+  faultBitmap = 0;
+  if (diagStage >= 2) { faultBitmap = faultBitmap | 0x01; }
+  if (diagStage >= 3) { faultBitmap = faultBitmap | 0x04; }
+
+  if (backboneMode != gLastBackboneMode ||
+      routeHealth != gLastRouteHealth ||
+      serviceHealth != gLastServiceHealth ||
+      securityLevel != gLastSecurityLevel ||
+      activeServices != gLastActiveServices ||
+      faultBitmap != gLastFaultBitmap)
+  {
+    write("[ETHB] mode=%d route=%d service=%d sec=%d active=%d faults=0x%02X",
+          backboneMode,
+          routeHealth,
+          serviceHealth,
+          securityLevel,
+          activeServices,
+          faultBitmap);
+    gLastBackboneMode = backboneMode;
+    gLastRouteHealth = routeHealth;
+    gLastServiceHealth = serviceHealth;
+    gLastSecurityLevel = securityLevel;
+    gLastActiveServices = activeServices;
+    gLastFaultBitmap = faultBitmap;
+  }
+}
+
+on start
+{
+  gIboxRouteState = 0;
+  gIboxSignalBars = 0;
+  gIboxServiceFlags = 0;
+  gSecuritySession = 0;
+  gAuthState = 0;
+  gSecurityFault = 0;
+  gNavSessionState = 0;
+  gNavRouteClass = 0;
+  gAlertLevel = 0;
+  gWarningPathStatus = 2;
+  gFailSafeMode = 0;
+  gNavRxMs = 0;
+  gNotifRxMs = 0;
+  gLastBackboneMode = -1;
+  gLastRouteHealth = -1;
+  gLastServiceHealth = -1;
+  gLastSecurityLevel = -1;
+  gLastActiveServices = -1;
+  gLastFaultBitmap = -1;
+  setTimer(tEthBackboneCycle, 100);
+  write("[ETHB] start");
+}
+
+on timer tEthBackboneCycle
+{
+  publishBackboneState();
+  setTimer(tEthBackboneCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tEthBackboneCycle);
+}
+
+on message frmNavModuleStateMsg
+{
+  gNavSessionState = clampRange((int)this.NavSessionState, 0, 3);
+  gNavRouteClass = clampRange((int)this.NavRouteClass, 0, 3);
+  gNavRxMs = getSimulationTimeMs();
+}
+
+on message frmClusterNotifMsg
+{
+  gAlertLevel = clampRange((int)this.ClusterNotifArg, 0, 7);
+  gNotifRxMs = getSimulationTimeMs();
+}

@@ -1,0 +1,157 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tMcuCycle;
+  int gTorqueLimit;
+  int gSpeedLimit;
+  int gEnergyFlowMode;
+  int gRegenLevel;
+  dword gPowerLimitRxMs;
+  dword gEnergyFlowRxMs;
+  int gLastPowerLimitInputStale;
+  int gLastEnergyFlowInputStale;
+  int gLastState;
+  int gLastTorque;
+  long gLastSpeed;
+}
+
+void traceMcuInputHealth(int powerLimitInputStale, int energyFlowInputStale)
+{
+  if (powerLimitInputStale != gLastPowerLimitInputStale)
+  {
+    if (powerLimitInputStale == 1)
+    {
+      write("[MCU] power-limit input stale");
+    }
+    else
+    {
+      write("[MCU] power-limit input restored");
+    }
+    gLastPowerLimitInputStale = powerLimitInputStale;
+  }
+
+  if (energyFlowInputStale != gLastEnergyFlowInputStale)
+  {
+    if (energyFlowInputStale == 1)
+    {
+      write("[MCU] energy-flow input stale");
+    }
+    else
+    {
+      write("[MCU] energy-flow input restored");
+    }
+    gLastEnergyFlowInputStale = energyFlowInputStale;
+  }
+}
+
+on start
+{
+  gTorqueLimit = 0;
+  gSpeedLimit = 0;
+  gEnergyFlowMode = 0;
+  gRegenLevel = 0;
+  gPowerLimitRxMs = 0;
+  gEnergyFlowRxMs = 0;
+  gLastPowerLimitInputStale = 0;
+  gLastEnergyFlowInputStale = 0;
+  gLastState = -1;
+  gLastTorque = -1;
+  gLastSpeed = -1;
+  setTimer(tMcuCycle, 100);
+  write("[MCU] start");
+}
+
+on message frmPowerLimitMsg
+{
+  gTorqueLimit = clampRange((int)this.TorqueLimit, 0, 255);
+  gSpeedLimit = clampRange((int)this.SpeedLimit, 0, 255);
+  gPowerLimitRxMs = getSimulationTimeMs();
+}
+
+on message frmEnergyFlowStateMsg
+{
+  gEnergyFlowMode = clampRange((int)this.EnergyFlowMode, 0, 7);
+  gRegenLevel = clampRange((int)this.RegenLevel, 0, 31);
+  gEnergyFlowRxMs = getSimulationTimeMs();
+}
+
+on timer tMcuCycle
+{
+  message frmMcuStateMsg mMcu;
+  int powerLimitInputStale;
+  int energyFlowInputStale;
+  int torqueLimit;
+  int speedLimit;
+  int energyFlowMode;
+  int regenLevel;
+  int mcuState;
+  int motorTorqueCmd;
+  long motorSpeedRpm;
+
+  powerLimitInputStale = (ethIsRecentTick(gPowerLimitRxMs, 300) == 1) ? 0 : 1;
+  energyFlowInputStale = (ethIsRecentTick(gEnergyFlowRxMs, 300) == 1) ? 0 : 1;
+  traceMcuInputHealth(powerLimitInputStale, energyFlowInputStale);
+
+  torqueLimit = gTorqueLimit;
+  speedLimit = gSpeedLimit;
+  energyFlowMode = gEnergyFlowMode;
+  regenLevel = gRegenLevel;
+  if (powerLimitInputStale == 1)
+  {
+    torqueLimit = 0;
+    speedLimit = 0;
+  }
+  if (energyFlowInputStale == 1)
+  {
+    energyFlowMode = 0;
+    regenLevel = 0;
+  }
+
+  if (torqueLimit > 0 || energyFlowMode > 0)
+  {
+    mcuState = 2;
+  }
+  else
+  {
+    mcuState = 1;
+  }
+
+  motorTorqueCmd = torqueLimit;
+  if (energyFlowMode > 0)
+  {
+    motorTorqueCmd = clampRange(motorTorqueCmd + regenLevel, 0, 255);
+  }
+
+  motorSpeedRpm = (long)clampRange(speedLimit, 0, 255) * 40;
+
+  mMcu.McuState = clampRange(mcuState, 0, 7);
+  mMcu.MotorTorqueCmd = clampRange(motorTorqueCmd, 0, 255);
+  mMcu.MotorSpeedRpm = motorSpeedRpm & 0xFFFF;
+  output(mMcu);
+
+  if (mMcu.McuState != gLastState ||
+      mMcu.MotorTorqueCmd != gLastTorque ||
+      mMcu.MotorSpeedRpm != gLastSpeed)
+  {
+    write("[MCU] state=%d torque=%d speed=%ld flow=%d regen=%d",
+          mMcu.McuState,
+          mMcu.MotorTorqueCmd,
+          mMcu.MotorSpeedRpm,
+          energyFlowMode,
+          regenLevel);
+    gLastState = mMcu.McuState;
+    gLastTorque = mMcu.MotorTorqueCmd;
+    gLastSpeed = mMcu.MotorSpeedRpm;
+  }
+
+  setTimer(tMcuCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tMcuCycle);
+}

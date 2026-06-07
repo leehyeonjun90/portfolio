@@ -1,0 +1,153 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tEdrCycle;
+  int gAlertLevel;
+  int gFailSafeMode;
+  int gWarningPathStatus;
+  int gE2eHealthState;
+  int gObjectTrackValid;
+  int gObjectEventCode;
+  int gLastRecordState;
+  int gLastEventSeverity;
+  int gLastRecordReason;
+  int gLastStorageLevel;
+  int gLastEventCode;
+}
+
+void publishEdrState()
+{
+  int alertLevel;
+  int recordState;
+  int eventSeverity;
+  int recordReason;
+  int storageLevel;
+  int lastEventCode;
+  int failSafeMode;
+  int warningPathStatus;
+  int e2eHealthState;
+  int objectTrackValid;
+  int objectEventCode;
+
+  alertLevel = 0;
+  failSafeMode = 0;
+  warningPathStatus = 0;
+  e2eHealthState = 2;
+  objectTrackValid = 0;
+  objectEventCode = 0;
+
+  alertLevel = clampRange(gAlertLevel, 0, 7);
+  failSafeMode = clampRange((int)@Core::failSafeMode, 0, 2);
+  warningPathStatus = clampRange((int)@CoreState::warningPathStatus, 0, 2);
+  e2eHealthState = clampRange((int)@CoreState::e2eHealthState, 0, 2);
+  objectTrackValid = clampRange((int)@Core::objectTrackValid, 0, 1);
+  objectEventCode = clampRange((int)@Core::objectEventCode, 0, 65535);
+
+  if (alertLevel >= 5)
+  {
+    eventSeverity = 3;
+  }
+  else if (alertLevel >= 3 || failSafeMode > 0)
+  {
+    eventSeverity = 2;
+  }
+  else if (alertLevel > 0 || objectTrackValid == 1)
+  {
+    eventSeverity = 1;
+  }
+  else
+  {
+    eventSeverity = 0;
+  }
+
+  if (failSafeMode == 2 || eventSeverity >= 3)
+  {
+    recordState = 2;
+  }
+  else if (eventSeverity > 0)
+  {
+    recordState = 1;
+  }
+  else
+  {
+    recordState = 0;
+  }
+
+  if (failSafeMode > 0)
+  {
+    recordReason = 1;
+  }
+  else if (objectTrackValid == 1)
+  {
+    recordReason = 2;
+  }
+  else if (alertLevel > 0)
+  {
+    recordReason = 3;
+  }
+  else
+  {
+    recordReason = 0;
+  }
+
+  storageLevel = clampRange((eventSeverity * 20) + (warningPathStatus * 10) + (e2eHealthState == 0 ? 30 : 0), 0, 100);
+  lastEventCode = clampRange(objectEventCode, 0, 255);
+
+  if (recordState != gLastRecordState ||
+      eventSeverity != gLastEventSeverity ||
+      recordReason != gLastRecordReason ||
+      storageLevel != gLastStorageLevel ||
+      lastEventCode != gLastEventCode)
+  {
+    write("[EDR] state=%d severity=%d reason=%d storage=%d lastCode=%d failSafe=%d alert=%d",
+          recordState,
+          eventSeverity,
+          recordReason,
+          storageLevel,
+          lastEventCode,
+          failSafeMode,
+          alertLevel);
+    gLastRecordState = recordState;
+    gLastEventSeverity = eventSeverity;
+    gLastRecordReason = recordReason;
+    gLastStorageLevel = storageLevel;
+    gLastEventCode = lastEventCode;
+  }
+}
+
+on start
+{
+  gAlertLevel = 0;
+  gFailSafeMode = 0;
+  gWarningPathStatus = 0;
+  gE2eHealthState = 2;
+  gObjectTrackValid = 0;
+  gObjectEventCode = 0;
+  gLastRecordState = -1;
+  gLastEventSeverity = -1;
+  gLastRecordReason = -1;
+  gLastStorageLevel = -1;
+  gLastEventCode = -1;
+  setTimer(tEdrCycle, 100);
+  write("[EDR] start");
+}
+
+on timer tEdrCycle
+{
+  publishEdrState();
+  setTimer(tEdrCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tEdrCycle);
+}
+
+on message frmAdasDomainStateMsg
+{
+  gAlertLevel = clampRange((int)this.SelectedAlertLevel, 0, 7);
+}

@@ -1,0 +1,318 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tNavModuleCycle;
+  msTimer tNavLaneAnim;
+  int gRoadZone;
+  int gNavDirection;
+  int gZoneDistance;
+  int gSpeedLimit;
+  dword gNavInputTouchMs;
+  int gLastNavInputStale;
+  int gLastNavState;
+  int gLastRouteClass;
+  int gLastGuideType;
+  int gLastEtaMinutes;
+  int gNavAnimFrame;
+}
+
+int calcBaseZoneContext(int roadZone, int navDirection)
+{
+  if (roadZone == 1)
+  {
+    return 1;
+  }
+  if (roadZone == 2)
+  {
+    return 2;
+  }
+  if (roadZone == 3)
+  {
+    return (navDirection == 2) ? 4 : 3;
+  }
+  return 0;
+}
+
+int calcEffectiveSpeedLimit(int speedLimit)
+{
+  speedLimit = clampRange(speedLimit, 0, 255);
+  if (speedLimit == 0)
+  {
+    return 30;
+  }
+  return speedLimit;
+}
+
+int hasNavContext(int roadZone, int navDirection, int zoneDistance, int speedLimit)
+{
+  if (roadZone > 0 || navDirection > 0 || zoneDistance > 0 || speedLimit > 0)
+  {
+    return 1;
+  }
+  return 0;
+}
+
+int navLeaseWindowMs()
+{
+  return 2000;
+}
+
+int navHoldWindowMs()
+{
+  return 4500;
+}
+
+int getNavAnimPeriod(int speedKph)
+{
+  if (speedKph <= 0)   return 500;
+  if (speedKph <= 20)  return 350;
+  if (speedKph <= 40)  return 250;
+  if (speedKph <= 70)  return 180;
+  if (speedKph <= 100) return 120;
+  return 80;
+}
+
+void markNavInputDirty()
+{
+  gNavInputTouchMs = getSimulationTimeMs();
+}
+
+void traceNavInputHealth(int navInputStale)
+{
+  if (navInputStale != gLastNavInputStale)
+  {
+    if (navInputStale == 1)
+    {
+      write("[NAV] input stale");
+    }
+    else
+    {
+      write("[NAV] input restored");
+    }
+    gLastNavInputStale = navInputStale;
+  }
+}
+
+void publishNavLaneFrame()
+{
+  int speed;
+  int roadZone;
+  int navDirection;
+  int manualMode;
+  int period;
+
+  manualMode = (((int)@Test::scenarioActiveId) == 0) ? 1 : 0;
+  if (manualMode == 1)
+  {
+    roadZone = clampRange((int)@Inject::roadZone, 0, 3);
+    navDirection = clampRange((int)@Inject::navDirection, 0, 3);
+    speed = clampRange((int)@Chassis::vehicleSpeed, 0, 255);
+  }
+  else
+  {
+    roadZone = clampRange(gRoadZone, 0, 3);
+    navDirection = clampRange(gNavDirection, 0, 3);
+    speed = clampRange((int)@Core::vehicleSpeedNorm, 0, 255);
+  }
+  if (roadZone != 3 || navDirection == 0 || speed <= 0)
+  {
+    gNavAnimFrame = 1;
+    @UiRender::navLaneFrame = 1;
+    setTimer(tNavLaneAnim, 300);
+    return;
+  }
+
+  if (gNavAnimFrame < 1 || gNavAnimFrame > 5)
+  {
+    gNavAnimFrame = 1;
+  }
+  else
+  {
+    gNavAnimFrame = gNavAnimFrame + 1;
+    if (gNavAnimFrame > 5)
+    {
+      gNavAnimFrame = 1;
+    }
+  }
+
+  @UiRender::navLaneFrame = gNavAnimFrame;
+  period = getNavAnimPeriod(speed);
+  setTimer(tNavLaneAnim, period);
+}
+
+void publishNavState()
+{
+  message frmNaviGuideStateMsg mGuide;
+  message frmNavigationRouteMsg mRouteBase;
+  message frmMapRenderStateMsg mMap;
+  message frmRouteAlertMsg mRoute;
+  message frmTrafficEventMsg mTraffic;
+  message frmNavModuleStateMsg mNavState;
+  int navInputStale;
+  int navInputExpired;
+  int navState;
+  int etaMinutes;
+  int trafficSeverity;
+  int routeVisualActive;
+  int speedLimit;
+  int manualMode;
+  int roadZone;
+  int navDirection;
+  int zoneDistance;
+
+  manualMode = (((int)@Test::scenarioActiveId) == 0) ? 1 : 0;
+  if (manualMode == 1)
+  {
+    navInputStale = 0;
+    navInputExpired = 0;
+    roadZone = clampRange((int)@Inject::roadZone, 0, 3);
+    navDirection = clampRange((int)@Inject::navDirection, 0, 3);
+    zoneDistance = clampRange((int)@Inject::zoneDistance, 0, 255);
+    speedLimit = calcEffectiveSpeedLimit((int)@Inject::speedLimit);
+  }
+  else
+  {
+    navInputStale = 0;
+    if (hasNavContext(gRoadZone, gNavDirection, gZoneDistance, gSpeedLimit) == 1 &&
+        ethIsRecentTick(gNavInputTouchMs, navLeaseWindowMs()) == 0)
+    {
+      navInputStale = 1;
+    }
+
+    navInputExpired = 0;
+    if (hasNavContext(gRoadZone, gNavDirection, gZoneDistance, gSpeedLimit) == 1 &&
+        ethIsRecentTick(gNavInputTouchMs, navHoldWindowMs()) == 0)
+    {
+      navInputExpired = 1;
+    }
+
+    roadZone = gRoadZone;
+    navDirection = gNavDirection;
+    zoneDistance = gZoneDistance;
+    speedLimit = calcEffectiveSpeedLimit(gSpeedLimit);
+    if (navInputExpired == 1)
+    {
+      roadZone = 0;
+      navDirection = 0;
+      zoneDistance = 0;
+      speedLimit = 30;
+    }
+  }
+  traceNavInputHealth(navInputStale);
+
+  navState = (roadZone > 0) ? 1 : 0;
+  if (roadZone == 3)
+  {
+    navState = 2;
+  }
+  if (zoneDistance <= 15 && navState > 0)
+  {
+    navState = 3;
+  }
+
+  etaMinutes = clampRange(zoneDistance / 10, 0, 255);
+  trafficSeverity = (roadZone == 1) ? 3 : ((roadZone > 0) ? 2 : 0);
+  routeVisualActive = (roadZone > 0 || navDirection > 0 || zoneDistance > 0) ? 1 : 0;
+
+  mMap.MapRenderState = routeVisualActive;
+  mMap.ZoomLevel = (roadZone == 2) ? 12 : 16;
+  mMap.TileLoadPercent = (routeVisualActive == 1) ? 95 : 70;
+  output(mMap);
+
+  mGuide.GuideLaneState = (roadZone == 3) ? navDirection : 0;
+  mGuide.GuideConfidence = (roadZone == 3) ? 50 : ((routeVisualActive == 1) ? 20 : 0);
+  output(mGuide);
+
+  mRouteBase.RouteClass = roadZone;
+  mRouteBase.GuideType = navDirection;
+  mRouteBase.RouteProgress = (routeVisualActive == 1) ? ((zoneDistance > 100) ? 20 : 80) : 0;
+  mRouteBase.EtaMinutes = etaMinutes;
+  output(mRouteBase);
+
+  mRoute.RouteAlertType = roadZone;
+  mRoute.RouteAlertPrio = (roadZone == 1) ? 5 : ((roadZone > 0) ? 2 : 0);
+  mRoute.RouteAlertActive = (roadZone > 0) ? 1 : 0;
+  mRoute.RouteAlertEta = zoneDistance;
+  output(mRoute);
+
+  mTraffic.TrafficEventType = roadZone;
+  mTraffic.TrafficSeverity = trafficSeverity;
+  mTraffic.TrafficDistance = zoneDistance;
+  output(mTraffic);
+
+  mNavState.NavSessionState = clampRange(navState, 0, 3);
+  mNavState.NavRouteClass = clampRange(roadZone, 0, 3);
+  mNavState.NavGuideType = clampRange(navDirection, 0, 3);
+  mNavState.NavTrafficSeverity = clampRange(trafficSeverity, 0, 3);
+  mNavState.NavEtaMinutes = etaMinutes;
+  mNavState.NavSpeedLimit = clampRange(speedLimit, 0, 255);
+  output(mNavState);
+
+  if (mNavState.NavSessionState != gLastNavState ||
+      mNavState.NavRouteClass != gLastRouteClass ||
+      mNavState.NavGuideType != gLastGuideType ||
+      mNavState.NavEtaMinutes != gLastEtaMinutes)
+  {
+    write("[NAV] state=%d class=%d guide=%d eta=%d dist=%d limit=%d",
+          mNavState.NavSessionState,
+          mNavState.NavRouteClass,
+          mNavState.NavGuideType,
+          mNavState.NavEtaMinutes,
+          zoneDistance,
+          speedLimit);
+    gLastNavState = mNavState.NavSessionState;
+    gLastRouteClass = mNavState.NavRouteClass;
+    gLastGuideType = mNavState.NavGuideType;
+    gLastEtaMinutes = mNavState.NavEtaMinutes;
+  }
+}
+
+on start
+{
+  gRoadZone = 0;
+  gNavDirection = 0;
+  gZoneDistance = 0;
+  gSpeedLimit = 0;
+  gNavInputTouchMs = 0;
+  gLastNavInputStale = 0;
+  gLastNavState = -1;
+  gLastRouteClass = -1;
+  gLastGuideType = -1;
+  gLastEtaMinutes = -1;
+  gNavAnimFrame = 1;
+  @UiRender::navLaneFrame = 1;
+  markNavInputDirty();
+  setTimer(tNavModuleCycle, 100);
+  setTimer(tNavLaneAnim, 300);
+  write("[NAV] start");
+}
+
+on timer tNavModuleCycle
+{
+  publishNavState();
+  setTimer(tNavModuleCycle, 100);
+}
+
+on timer tNavLaneAnim
+{
+  publishNavLaneFrame();
+}
+
+on message frmNavContextCanMsg
+{
+  gRoadZone = clampRange((int)this.gRoadZone, 0, 3);
+  gNavDirection = clampRange((int)this.gNavDirection, 0, 3);
+  gZoneDistance = clampRange((int)this.gZoneDistance, 0, 255);
+  gSpeedLimit = clampRange((int)this.gSpeedLimit, 0, 255);
+  markNavInputDirty();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tNavModuleCycle);
+  cancelTimer(tNavLaneAnim);
+}

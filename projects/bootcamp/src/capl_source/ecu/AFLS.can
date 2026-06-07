@@ -1,0 +1,149 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tAflsCycle;
+  int gSteeringAngle;
+  int gHeadLampState;
+  dword gSteeringAngleRxMs;
+  dword gLampControlRxMs;
+  int gLastSteeringInputStale;
+  int gLastLampInputStale;
+  int gLastAflsMode;
+  int gLastBeamPattern;
+  int gLastCornerLampState;
+  int gLastLevelStep;
+}
+
+void traceAflsInputHealth(int steeringInputStale, int lampInputStale)
+{
+  if (steeringInputStale != gLastSteeringInputStale)
+  {
+    if (steeringInputStale == 1)
+    {
+      write("[AFLS] steering-angle input stale");
+    }
+    else
+    {
+      write("[AFLS] steering-angle input restored");
+    }
+    gLastSteeringInputStale = steeringInputStale;
+  }
+
+  if (lampInputStale != gLastLampInputStale)
+  {
+    if (lampInputStale == 1)
+    {
+      write("[AFLS] lamp-control input stale");
+    }
+    else
+    {
+      write("[AFLS] lamp-control input restored");
+    }
+    gLastLampInputStale = lampInputStale;
+  }
+}
+
+void publishAflsState()
+{
+  message frmAflsStateMsg mAfls;
+  int steeringInputStale;
+  int lampInputStale;
+  int steeringAngle;
+  int headLampState;
+  int aflsMode;
+  int beamPattern;
+  int cornerLampState;
+  int levelStep;
+
+  steeringInputStale = (ethIsRecentTick(gSteeringAngleRxMs, 300) == 1) ? 0 : 1;
+  lampInputStale = (ethIsRecentTick(gLampControlRxMs, 300) == 1) ? 0 : 1;
+  traceAflsInputHealth(steeringInputStale, lampInputStale);
+
+  steeringAngle = gSteeringAngle;
+  headLampState = gHeadLampState;
+  if (steeringInputStale == 1)
+  {
+    steeringAngle = 0;
+  }
+  if (lampInputStale == 1)
+  {
+    headLampState = 1;
+  }
+
+  aflsMode = (headLampState >= 2) ? 1 : 0;
+  beamPattern = (headLampState >= 2) ? 2 : 0;
+  cornerLampState = ((aflsMode == 1) && (abs(steeringAngle) >= 80)) ? 1 : 0;
+  levelStep = clampRange(abs(steeringAngle) / 20, 0, 255);
+  if (aflsMode == 1 && levelStep == 0)
+  {
+    levelStep = 1;
+  }
+
+  mAfls.AflsMode = clampRange(aflsMode, 0, 7);
+  mAfls.BeamPattern = clampRange(beamPattern, 0, 7);
+  mAfls.CornerLampState = clampRange(cornerLampState, 0, 1);
+  mAfls.LevelStep = levelStep;
+  output(mAfls);
+
+  if (mAfls.AflsMode != gLastAflsMode ||
+      mAfls.BeamPattern != gLastBeamPattern ||
+      mAfls.CornerLampState != gLastCornerLampState ||
+      mAfls.LevelStep != gLastLevelStep)
+  {
+    write("[AFLS] mode=%d beam=%d corner=%d level=%d steer=%d lamp=%d",
+          mAfls.AflsMode,
+          mAfls.BeamPattern,
+          mAfls.CornerLampState,
+          mAfls.LevelStep,
+          steeringAngle,
+          headLampState);
+    gLastAflsMode = mAfls.AflsMode;
+    gLastBeamPattern = mAfls.BeamPattern;
+    gLastCornerLampState = mAfls.CornerLampState;
+    gLastLevelStep = mAfls.LevelStep;
+  }
+}
+
+on start
+{
+  gSteeringAngle = 0;
+  gHeadLampState = 1;
+  gSteeringAngleRxMs = 0;
+  gLampControlRxMs = 0;
+  gLastSteeringInputStale = 0;
+  gLastLampInputStale = 0;
+  gLastAflsMode = -1;
+  gLastBeamPattern = -1;
+  gLastCornerLampState = -1;
+  gLastLevelStep = -1;
+  setTimer(tAflsCycle, 100);
+  write("[AFLS] start");
+}
+
+on timer tAflsCycle
+{
+
+  publishAflsState();
+  setTimer(tAflsCycle, 100);
+}
+
+on message frmSteeringAngleMsg
+{
+  gSteeringAngle = clampRange((int)(this.SteeringAngleRaw / 10), 0, 720);
+  gSteeringAngleRxMs = getSimulationTimeMs();
+}
+
+on message frmLampControlMsg
+{
+  gHeadLampState = clampRange((int)this.HeadLampState, 0, 3);
+  gLampControlRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tAflsCycle);
+}

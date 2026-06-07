@@ -1,0 +1,210 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tSrrRrCycle;
+  int gMergeConflict;
+  int gRiskClass;
+  int gTurnLampState;
+  dword gScenarioAlertRxMs;
+  dword gRiskStateRxMs;
+  dword gLampRxMs;
+  int gWarningPathStatus;
+  int gE2eHealthState;
+  int gFailSafeMode;
+  dword gFailSafeRxMs;
+  int gLastObjectInputStale;
+  int gLastLampInputStale;
+  int gLastFailSafeInputStale;
+  int gLastDetected;
+  int gLastRisk;
+  int gLastMerge;
+  int gLastTurn;
+  int gLastPathReady;
+}
+
+int srrRrPathReady()
+{
+  if (ethIsRecentTick(gFailSafeRxMs, 300) == 0)
+  {
+    return 0;
+  }
+  if (gWarningPathStatus >= 2 || gE2eHealthState == 0 || gFailSafeMode >= 2)
+  {
+    return 0;
+  }
+  return 1;
+}
+
+void traceSrrRrInputHealth(int objectInputStale, int lampInputStale, int failSafeInputStale)
+{
+  if (objectInputStale != gLastObjectInputStale)
+  {
+    if (objectInputStale == 1)
+    {
+      write("[SRR_RR] object input stale");
+    }
+    else
+    {
+      write("[SRR_RR] object input restored");
+    }
+    gLastObjectInputStale = objectInputStale;
+  }
+
+  if (lampInputStale != gLastLampInputStale)
+  {
+    if (lampInputStale == 1)
+    {
+      write("[SRR_RR] lamp input stale");
+    }
+    else
+    {
+      write("[SRR_RR] lamp input restored");
+    }
+    gLastLampInputStale = lampInputStale;
+  }
+
+  if (failSafeInputStale != gLastFailSafeInputStale)
+  {
+    if (failSafeInputStale == 1)
+    {
+      write("[SRR_RR] fail-safe input stale");
+    }
+    else
+    {
+      write("[SRR_RR] fail-safe input restored");
+    }
+    gLastFailSafeInputStale = failSafeInputStale;
+  }
+}
+
+void publishSrrRrState()
+{
+  message frmSrrRrStateMsg mSrrRr;
+  int objectInputStale;
+  int lampInputStale;
+  int failSafeInputStale;
+  int mergeConflict;
+  int riskClass;
+  int turnLampState;
+  int detected;
+  int riskLevel;
+  int pathReady;
+
+  objectInputStale =
+    ((ethIsRecentTick(gScenarioAlertRxMs, 300) == 1) &&
+     (ethIsRecentTick(gRiskStateRxMs, 300) == 1)) ? 0 : 1;
+  lampInputStale = (ethIsRecentTick(gLampRxMs, 300) == 1) ? 0 : 1;
+  failSafeInputStale = (ethIsRecentTick(gFailSafeRxMs, 300) == 1) ? 0 : 1;
+  traceSrrRrInputHealth(objectInputStale, lampInputStale, failSafeInputStale);
+
+  mergeConflict = gMergeConflict;
+  riskClass = gRiskClass;
+  turnLampState = gTurnLampState;
+  if (objectInputStale == 1)
+  {
+    mergeConflict = 0;
+    riskClass = 0;
+  }
+  if (lampInputStale == 1)
+  {
+    turnLampState = 0;
+  }
+
+  pathReady = srrRrPathReady();
+  detected = (mergeConflict == 1 && turnLampState == 2 && riskClass >= 2) ? 1 : 0;
+  riskLevel = (detected == 1) ? clampRange(35 + (riskClass * 10), 0, 100) : 0;
+  if (pathReady == 0)
+  {
+    mergeConflict = 0;
+    riskClass = 0;
+    detected = 0;
+    riskLevel = 0;
+  }
+
+  mSrrRr.SideObjectDetected = detected;
+  mSrrRr.SideRiskLevel = riskLevel;
+  mSrrRr.MergeConflict = mergeConflict;
+  mSrrRr.TurnLampState = turnLampState;
+  output(mSrrRr);
+
+  if (pathReady != gLastPathReady ||
+      detected != gLastDetected ||
+      riskLevel != gLastRisk ||
+      mergeConflict != gLastMerge ||
+      turnLampState != gLastTurn)
+  {
+    write("[SRR_RR] path=%d detected=%d risk=%d merge=%d turn=%d class=%d",
+          pathReady,
+          detected,
+          riskLevel,
+          mergeConflict,
+          turnLampState,
+          riskClass);
+    gLastPathReady = pathReady;
+    gLastDetected = detected;
+    gLastRisk = riskLevel;
+    gLastMerge = mergeConflict;
+    gLastTurn = turnLampState;
+  }
+}
+
+on start
+{
+  gMergeConflict = 0;
+  gRiskClass = 0;
+  gTurnLampState = 0;
+  gScenarioAlertRxMs = 0;
+  gRiskStateRxMs = 0;
+  gLampRxMs = 0;
+  gWarningPathStatus = 1;
+  gE2eHealthState = 1;
+  gFailSafeMode = 1;
+  gFailSafeRxMs = 0;
+  gLastObjectInputStale = 0;
+  gLastLampInputStale = 0;
+  gLastFailSafeInputStale = 0;
+  gLastPathReady = -1;
+  gLastDetected = -1;
+  gLastRisk = -1;
+  gLastMerge = -1;
+  gLastTurn = -1;
+  setTimer(tSrrRrCycle, 100);
+  write("[SRR_RR] start");
+}
+
+on timer tSrrRrCycle
+{
+  publishSrrRrState();
+  setTimer(tSrrRrCycle, 100);
+}
+
+on message frmLampControlMsg
+{
+  gTurnLampState = clampRange((int)this.TurnLampState, 0, 3);
+  gLampRxMs = getSimulationTimeMs();
+}
+
+on message frmSrrRrInputMsg
+{
+  gMergeConflict = clampRange((int)this.MergeConflict, 0, 1);
+  gRiskClass = clampRange((int)this.RiskClass, 0, 7);
+  gScenarioAlertRxMs = getSimulationTimeMs();
+  gRiskStateRxMs = gScenarioAlertRxMs;
+}
+
+on message frmAdasDomainStateMsg
+{
+  gWarningPathStatus = clampRange((int)this.WarningPathStatus, 0, 2);
+  gE2eHealthState = clampRange((int)this.E2eHealthState, 0, 2);
+  gFailSafeMode = clampRange((int)this.FailSafeMode, 0, 2);
+  gFailSafeRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tSrrRrCycle);
+}

@@ -1,0 +1,144 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tAhlsCycle;
+  int gAflsMode;
+  int gBeamPattern;
+  int gLevelStep;
+  int gVehicleSpeed;
+  dword gAflsStateRxMs;
+  dword gVehicleRxMs;
+  int gLastAflsInputStale;
+  int gLastVehicleInputStale;
+  int gLastAssistState;
+  int gLastPermit;
+  int gLastGlareCut;
+}
+
+void traceAhlsInputHealth(int aflsInputStale, int vehicleInputStale)
+{
+  if (aflsInputStale != gLastAflsInputStale)
+  {
+    if (aflsInputStale == 1)
+    {
+      write("[AHLS] afls input stale");
+    }
+    else
+    {
+      write("[AHLS] afls input restored");
+    }
+    gLastAflsInputStale = aflsInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[AHLS] vehicle input stale");
+    }
+    else
+    {
+      write("[AHLS] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+on start
+{
+  gAflsMode = 0;
+  gBeamPattern = 0;
+  gLevelStep = 0;
+  gVehicleSpeed = 0;
+  gAflsStateRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastAflsInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastAssistState = -1;
+  gLastPermit = -1;
+  gLastGlareCut = -1;
+  setTimer(tAhlsCycle, 100);
+  write("[AHLS] start");
+}
+
+on message frmAflsStateMsg
+{
+  gAflsMode = clampRange((int)this.AflsMode, 0, 7);
+  gBeamPattern = clampRange((int)this.BeamPattern, 0, 7);
+  gLevelStep = clampRange((int)this.LevelStep, 0, 255);
+  gAflsStateRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on timer tAhlsCycle
+{
+  message frmAhlsStateMsg mAhls;
+  int aflsInputStale;
+  int vehicleInputStale;
+  int speed;
+  int aflsMode;
+  int beamPattern;
+  int levelStep;
+  int assistState;
+  int highBeamPermit;
+  int glareCutLevel;
+
+  aflsInputStale = (ethIsRecentTick(gAflsStateRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  traceAhlsInputHealth(aflsInputStale, vehicleInputStale);
+
+  speed = gVehicleSpeed;
+  aflsMode = gAflsMode;
+  beamPattern = gBeamPattern;
+  levelStep = gLevelStep;
+  if (vehicleInputStale == 1)
+  {
+    speed = 0;
+  }
+  if (aflsInputStale == 1)
+  {
+    aflsMode = 0;
+    beamPattern = 0;
+    levelStep = 0;
+  }
+
+  assistState = (aflsMode > 0) ? 1 : 0;
+  highBeamPermit = (speed >= 50 && beamPattern <= 2) ? 1 : 0;
+  glareCutLevel = clampRange((levelStep / 2) + (highBeamPermit == 1 ? 20 : 0), 0, 100);
+
+  mAhls.AhlsAssistState = clampRange(assistState, 0, 7);
+  mAhls.HighBeamPermit = clampRange(highBeamPermit, 0, 1);
+  mAhls.GlareCutLevel = clampRange(glareCutLevel, 0, 100);
+  output(mAhls);
+
+  if (mAhls.AhlsAssistState != gLastAssistState ||
+      mAhls.HighBeamPermit != gLastPermit ||
+      mAhls.GlareCutLevel != gLastGlareCut)
+  {
+    write("[AHLS] assist=%d permit=%d glare=%d speed=%d beam=%d",
+          mAhls.AhlsAssistState,
+          mAhls.HighBeamPermit,
+          mAhls.GlareCutLevel,
+          speed,
+          beamPattern);
+    gLastAssistState = mAhls.AhlsAssistState;
+    gLastPermit = mAhls.HighBeamPermit;
+    gLastGlareCut = mAhls.GlareCutLevel;
+  }
+
+  setTimer(tAhlsCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tAhlsCycle);
+}

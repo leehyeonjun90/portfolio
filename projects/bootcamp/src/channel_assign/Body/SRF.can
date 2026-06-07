@@ -1,0 +1,103 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tSunroofCycle;
+  int gSunroofPositionCmd;
+  int gSunroofTiltCmd;
+  int gSunshadeCmd;
+  dword gSunroofCtrlRxMs;
+  int gLastInputStale;
+  int gLastPosition;
+  int gLastTiltState;
+  int gLastSunshadeState;
+}
+
+void traceSrfInputHealth(int inputStale)
+{
+  if (inputStale != gLastInputStale)
+  {
+    if (inputStale == 1)
+    {
+      write("[SRF] control input stale");
+    }
+    else
+    {
+      write("[SRF] control input restored");
+    }
+    gLastInputStale = inputStale;
+  }
+}
+
+on start
+{
+  gSunroofPositionCmd = 0;
+  gSunroofTiltCmd = 0;
+  gSunshadeCmd = 0;
+  gSunroofCtrlRxMs = 0;
+  gLastInputStale = 0;
+  gLastPosition = -1;
+  gLastTiltState = -1;
+  gLastSunshadeState = -1;
+  setTimer(tSunroofCycle, 100);
+  write("[SRF] start");
+}
+
+on timer tSunroofCycle
+{
+  message frmSunroofStateMsg mRoof;
+  int inputStale;
+  int position;
+  int tiltState;
+  int sunshadeState;
+
+  inputStale = (ethIsRecentTick(gSunroofCtrlRxMs, 300) == 1) ? 0 : 1;
+  traceSrfInputHealth(inputStale);
+
+  position = gSunroofPositionCmd;
+  tiltState = gSunroofTiltCmd;
+  sunshadeState = gSunshadeCmd;
+  if (inputStale == 1)
+  {
+    position = 0;
+    tiltState = 0;
+    sunshadeState = 0;
+  }
+
+  mRoof.SunroofPosition = clampRange(position, 0, 100);
+  mRoof.SunroofTiltState = clampRange(tiltState, 0, 3);
+  mRoof.SunshadeState = clampRange(sunshadeState, 0, 3);
+  output(mRoof);
+
+  if (mRoof.SunroofPosition != gLastPosition ||
+      mRoof.SunroofTiltState != gLastTiltState ||
+      mRoof.SunshadeState != gLastSunshadeState)
+  {
+    write("[SRF] pos=%d tilt=%d shade=%d",
+          mRoof.SunroofPosition,
+          mRoof.SunroofTiltState,
+          mRoof.SunshadeState);
+    gLastPosition = mRoof.SunroofPosition;
+    gLastTiltState = mRoof.SunroofTiltState;
+    gLastSunshadeState = mRoof.SunshadeState;
+  }
+
+  setTimer(tSunroofCycle, 100);
+}
+
+on message frmSunroofControlMsg
+{
+  gSunroofPositionCmd = clampRange((int)this.SunroofPositionCmd, 0, 100);
+  gSunroofTiltCmd = clampRange((int)this.SunroofTiltCmd, 0, 3);
+  gSunshadeCmd = clampRange((int)this.SunshadeCmd, 0, 3);
+  gSunroofCtrlRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tSunroofCycle);
+}
+

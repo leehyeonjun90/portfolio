@@ -1,0 +1,89 @@
+/*@!Encoding:949*/
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tCdcCycle;
+  int gDampingLevel;
+  dword gSuspensionRxMs;
+  int gLastMode;
+  int gLastValveCurrent;
+  int gLastInputStale;
+}
+
+on start
+{
+  gDampingLevel = 12;
+  gSuspensionRxMs = 0;
+  gLastMode = -1;
+  gLastValveCurrent = -1;
+  gLastInputStale = 1;
+  setTimer(tCdcCycle, 100);
+  write("[CDC] start");
+}
+
+on message frmSuspensionStateMsg
+{
+  gDampingLevel = clampRange((int)this.DampingLevel, 0, 255);
+  gSuspensionRxMs = getSimulationTimeMs();
+}
+
+on timer tCdcCycle
+{
+  message frmCdcStateMsg mCdc;
+  int inputStale;
+  int dampingLevel;
+  int mode;
+  int valveCurrent;
+
+  inputStale = 1;
+  if (gSuspensionRxMs != 0 &&
+      (getSimulationTimeMs() - gSuspensionRxMs) <= 300)
+  {
+    inputStale = 0;
+  }
+
+  dampingLevel = gDampingLevel;
+  if (inputStale == 1)
+  {
+    dampingLevel = 12;
+  }
+
+  if (inputStale != gLastInputStale)
+  {
+    if (inputStale == 1)
+    {
+      write("[CDC] suspension input stale");
+    }
+    else
+    {
+      write("[CDC] suspension input restored");
+    }
+    gLastInputStale = inputStale;
+  }
+
+  mode = (dampingLevel > 20) ? 2 : ((dampingLevel > 0) ? 1 : 0);
+  valveCurrent = clampRange(dampingLevel * 4, 0, 255);
+
+  mCdc.CdcMode = clampRange(mode, 0, 7);
+  mCdc.CdcValveCurrent = valveCurrent;
+  output(mCdc);
+
+  if (mCdc.CdcMode != gLastMode ||
+      mCdc.CdcValveCurrent != gLastValveCurrent)
+  {
+    write("[CDC] mode=%d current=%d", mCdc.CdcMode, mCdc.CdcValveCurrent);
+    gLastMode = mCdc.CdcMode;
+    gLastValveCurrent = mCdc.CdcValveCurrent;
+  }
+
+  setTimer(tCdcCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tCdcCycle);
+}

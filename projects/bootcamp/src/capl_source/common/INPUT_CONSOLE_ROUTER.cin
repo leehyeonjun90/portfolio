@@ -1,0 +1,871 @@
+int mapZoneDistancePresetIdx(int idx)
+{
+  idx = clampRange(idx, 0, 4);
+  switch (idx)
+  {
+    case 0: return 0;
+    case 1: return 30;
+    case 2: return 60;
+    case 3: return 120;
+    default: return 200;
+  }
+}
+
+int mapSpeedLimitPresetIdx(int idx)
+{
+  idx = clampRange(idx, 0, 4);
+  switch (idx)
+  {
+    case 0: return 30;
+    case 1: return 50;
+    case 2: return 80;
+    case 3: return 100;
+    default: return 120;
+  }
+}
+
+int inputConsoleScenarioCompatIsActive()
+{
+  return (((int)@Test::scenarioCommand) != 0 ||
+          clampRange((int)@Test::scenarioCommandAck, 0, 255) != 0 ||
+          clampRange((int)@Test::scenarioActiveId, 0, 255) != 0 ||
+          clampRange((int)@Test::scenarioSettledId, 0, 255) != 0 ||
+          clampRange((int)@Test::scenarioEvaluatedId, 0, 255) != 0 ||
+          clampRange((int)@Test::testScenario, 0, 255) != 0 ||
+          clampRange((int)@Test::scenarioStopReq, 0, 1) != 0);
+}
+
+int calcInputConsoleCompatEtaFromPanelPos(int pos)
+{
+  pos = clampRange(pos, 0, 7);
+  if (pos <= 0)
+  {
+    return 255;
+  }
+  return clampRange((8 - pos) * 4, 1, 60);
+}
+
+void clearInputConsoleManualCompat()
+{
+  @Test::compatPoliceDispatch = 0;
+  @Test::compatAmbulanceDispatch = 0;
+  @Test::compatEmergencyDirection = 0;
+  @Test::compatEmergencyEta = 255;
+  @Test::compatEmergencySourceId = 255;
+}
+
+void publishInputConsoleManualCompat()
+{
+  int policePos;
+  int ambulancePos;
+  int manualAlertOverride;
+  int manualEmergencyAlertCmd;
+  int emergencyType;
+  int emergencyDirection;
+  int emergencyEta;
+  int emergencySourceId;
+  int policeDispatch;
+  int ambulanceDispatch;
+
+  if (inputConsoleScenarioCompatIsActive() == 1)
+  {
+    return;
+  }
+
+  policePos = clampRange((int)@V2X::policePos, 0, 7);
+  ambulancePos = clampRange((int)@V2X::ambulancePos, 0, 7);
+  manualAlertOverride = clampRange((int)@Inject::manualAlertOverrideCmd, 0, 255);
+  if (manualAlertOverride == 0 && (((int)@Inject::emergencyActiveCmd) > 0))
+  {
+    manualAlertOverride = 1;
+  }
+  manualEmergencyAlertCmd = clampRange((int)@Inject::emergencyActiveCmd, 0, 1);
+  policeDispatch = 0;
+  ambulanceDispatch = 0;
+  emergencyType = clampRange((int)@Inject::emergencyType, 0, 2);
+  emergencyDirection = clampRange((int)@Inject::emergencyDirection, 0, 3);
+  emergencyEta = clampRange((int)@Inject::emergencyEtaSec, 0, 255);
+  emergencySourceId = clampRange((int)@Inject::emergencySourceId, 0, 255);
+  if (emergencySourceId == 0)
+  {
+    emergencySourceId = 255;
+  }
+
+  if (manualEmergencyAlertCmd == 1 || manualAlertOverride > 0)
+  {
+    if (emergencyType == 0)
+    {
+      emergencyType = 2;
+    }
+    if (emergencyEta == 0 || emergencyEta == 255)
+    {
+      emergencyEta = 20;
+    }
+    if (emergencySourceId == 0 || emergencySourceId == 255)
+    {
+      emergencySourceId = (emergencyType == 1) ? 1 : 2;
+    }
+    policeDispatch = (emergencyType == 1) ? 1 : 0;
+    ambulanceDispatch = (emergencyType == 2) ? 1 : 0;
+  }
+  else if (ambulancePos > 0 || policePos > 0)
+  {
+    emergencyDirection = 0;
+    if (ambulancePos >= policePos)
+    {
+      ambulanceDispatch = 1;
+      emergencyEta = calcInputConsoleCompatEtaFromPanelPos(ambulancePos);
+      emergencySourceId = 2;
+    }
+    else
+    {
+      policeDispatch = 1;
+      emergencyEta = calcInputConsoleCompatEtaFromPanelPos(policePos);
+      emergencySourceId = 1;
+    }
+  }
+
+  if (policeDispatch == 1 || ambulanceDispatch == 1)
+  {
+    @Test::compatPoliceDispatch = policeDispatch;
+    @Test::compatAmbulanceDispatch = ambulanceDispatch;
+    @Test::compatEmergencyDirection = emergencyDirection;
+    @Test::compatEmergencyEta = emergencyEta;
+    @Test::compatEmergencySourceId = emergencySourceId;
+  }
+  else
+  {
+    clearInputConsoleManualCompat();
+  }
+}
+
+void refreshSeatBeltOverrideFromPanel()
+{
+  int driverBeltOff;
+  int passengerBeltOff;
+  int seatBeltOverride;
+
+  driverBeltOff = (((int)@Test::driverBeltOff) > 0) ? 1 : 0;
+  passengerBeltOff = (((int)@Test::passengerBeltOff) > 0) ? 1 : 0;
+  seatBeltOverride = 0;
+
+  if (driverBeltOff == 1)
+  {
+    seatBeltOverride += 1;
+  }
+  if (passengerBeltOff == 1)
+  {
+    seatBeltOverride += 2;
+  }
+
+  @Test::seatBeltOverride = seatBeltOverride;
+}
+
+on sysvar Inject::zoneDistancePresetIdx
+{
+  @Inject::zoneDistance = mapZoneDistancePresetIdx((int)@Inject::zoneDistancePresetIdx);
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::speedLimitPresetIdx
+{
+  @Inject::speedLimit = mapSpeedLimitPresetIdx((int)@Inject::speedLimitPresetIdx);
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Cmd::ignitionOff
+{
+  if (((int)@Cmd::ignitionOff) <= 0)
+  {
+    return;
+  }
+  @Cmd::ignitionCmd = 0;
+  @Cmd::ignitionOff = 0;
+}
+
+on sysvar Cmd::ignitionOn
+{
+  if (((int)@Cmd::ignitionOn) <= 0)
+  {
+    return;
+  }
+  @Cmd::ignitionCmd = 1;
+  @Cmd::ignitionOn = 0;
+}
+
+on sysvar Cmd::gearP
+{
+  if (((int)@Cmd::gearP) <= 0)
+  {
+    return;
+  }
+  @Cmd::driveStateCmd = 0;
+  @Cmd::gearP = 0;
+}
+
+on sysvar Cmd::gearR
+{
+  if (((int)@Cmd::gearR) <= 0)
+  {
+    return;
+  }
+  @Cmd::driveStateCmd = 1;
+  @Cmd::gearR = 0;
+}
+
+on sysvar Cmd::gearN
+{
+  if (((int)@Cmd::gearN) <= 0)
+  {
+    return;
+  }
+  @Cmd::driveStateCmd = 2;
+  @Cmd::gearN = 0;
+}
+
+on sysvar Cmd::gearD
+{
+  if (((int)@Cmd::gearD) <= 0)
+  {
+    return;
+  }
+  @Cmd::driveStateCmd = 3;
+  @Cmd::gearD = 0;
+}
+
+on sysvar Cmd::speed0
+{
+  if (((int)@Cmd::speed0) <= 0)
+  {
+    return;
+  }
+  @Cmd::vehicleSpeedCmd = 0;
+  @Cmd::speed0 = 0;
+}
+
+on sysvar Cmd::speed30
+{
+  if (((int)@Cmd::speed30) <= 0)
+  {
+    return;
+  }
+  @Cmd::vehicleSpeedCmd = 30;
+  @Cmd::speed30 = 0;
+}
+
+on sysvar Cmd::speed50
+{
+  if (((int)@Cmd::speed50) <= 0)
+  {
+    return;
+  }
+  @Cmd::vehicleSpeedCmd = 50;
+  @Cmd::speed50 = 0;
+}
+
+on sysvar Cmd::speed80
+{
+  if (((int)@Cmd::speed80) <= 0)
+  {
+    return;
+  }
+  @Cmd::vehicleSpeedCmd = 80;
+  @Cmd::speed80 = 0;
+}
+
+on sysvar Cmd::speed100
+{
+  if (((int)@Cmd::speed100) <= 0)
+  {
+    return;
+  }
+  @Cmd::vehicleSpeedCmd = 100;
+  @Cmd::speed100 = 0;
+}
+
+on sysvar Cmd::doorLockHold
+{
+  if (((int)@Cmd::doorLockHold) <= 0)
+  {
+    return;
+  }
+  @Cmd::doorLockCmd = 0;
+  @Cmd::doorLockHold = 0;
+}
+
+on sysvar Cmd::doorUnlock
+{
+  if (((int)@Cmd::doorUnlock) <= 0)
+  {
+    return;
+  }
+  @Cmd::doorLockCmd = 1;
+  @Cmd::doorUnlock = 0;
+}
+
+on sysvar Cmd::doorLock
+{
+  if (((int)@Cmd::doorLock) <= 0)
+  {
+    return;
+  }
+  @Cmd::doorLockCmd = 2;
+  @Cmd::doorLock = 0;
+}
+
+on sysvar Cmd::doorCmdHold
+{
+  if (((int)@Cmd::doorCmdHold) <= 0)
+  {
+    return;
+  }
+  @Cmd::doorOpenCmd = 0;
+  @Cmd::doorCmdHold = 0;
+}
+
+on sysvar Cmd::doorCmdOpen
+{
+  if (((int)@Cmd::doorCmdOpen) <= 0)
+  {
+    return;
+  }
+  @Cmd::doorOpenCmd = 1;
+  @Cmd::doorCmdOpen = 0;
+}
+
+on sysvar Cmd::doorCmdClose
+{
+  if (((int)@Cmd::doorCmdClose) <= 0)
+  {
+    return;
+  }
+  @Cmd::doorOpenCmd = 2;
+  @Cmd::doorCmdClose = 0;
+}
+
+on sysvar Cmd::windowHold
+{
+  if (((int)@Cmd::windowHold) <= 0)
+  {
+    return;
+  }
+  @Cmd::windowCmd = 0;
+  @Cmd::windowHold = 0;
+}
+
+on sysvar Cmd::windowUp
+{
+  if (((int)@Cmd::windowUp) <= 0)
+  {
+    return;
+  }
+  @Cmd::windowCmd = 1;
+  @Cmd::windowUp = 0;
+}
+
+on sysvar Cmd::windowDown
+{
+  if (((int)@Cmd::windowDown) <= 0)
+  {
+    return;
+  }
+  @Cmd::windowCmd = 2;
+  @Cmd::windowDown = 0;
+}
+
+on sysvar Cmd::wiperOff
+{
+  if (((int)@Cmd::wiperOff) <= 0)
+  {
+    return;
+  }
+  @Cmd::wiperCmd = 0;
+  @Cmd::wiperOff = 0;
+}
+
+on sysvar Cmd::wiperInt
+{
+  if (((int)@Cmd::wiperInt) <= 0)
+  {
+    return;
+  }
+  @Cmd::wiperCmd = 1;
+  @Cmd::wiperInt = 0;
+}
+
+on sysvar Cmd::wiperHigh
+{
+  if (((int)@Cmd::wiperHigh) <= 0)
+  {
+    return;
+  }
+  @Cmd::wiperCmd = 2;
+  @Cmd::wiperHigh = 0;
+}
+
+on sysvar Cmd::turnOff
+{
+  if (((int)@Cmd::turnOff) <= 0)
+  {
+    return;
+  }
+  @Cmd::turnSignalCmd = 0;
+  @Cmd::turnOff = 0;
+}
+
+on sysvar Cmd::turnLeft
+{
+  if (((int)@Cmd::turnLeft) <= 0)
+  {
+    return;
+  }
+  @Cmd::turnSignalCmd = 1;
+  @Cmd::turnLeft = 0;
+}
+
+on sysvar Cmd::turnRight
+{
+  if (((int)@Cmd::turnRight) <= 0)
+  {
+    return;
+  }
+  @Cmd::turnSignalCmd = 2;
+  @Cmd::turnRight = 0;
+}
+
+on sysvar Cmd::turnHazard
+{
+  if (((int)@Cmd::turnHazard) <= 0)
+  {
+    return;
+  }
+  @Cmd::turnSignalCmd = 3;
+  @Cmd::turnHazard = 0;
+}
+
+on sysvar Cmd::cruiseOff
+{
+  if (((int)@Cmd::cruiseOff) <= 0)
+  {
+    return;
+  }
+  @Cmd::cruiseStateCmd = 0;
+  @Cmd::cruiseOff = 0;
+}
+
+on sysvar Cmd::cruiseOn
+{
+  if (((int)@Cmd::cruiseOn) <= 0)
+  {
+    return;
+  }
+  @Cmd::cruiseStateCmd = 1;
+  @Cmd::cruiseOn = 0;
+}
+
+on sysvar Cmd::cruiseDecel
+{
+  if (((int)@Cmd::cruiseDecel) <= 0)
+  {
+    return;
+  }
+  @Cmd::cruiseStateCmd = 2;
+  @Cmd::cruiseDecel = 0;
+}
+
+on sysvar Cmd::cruise30
+{
+  if (((int)@Cmd::cruise30) <= 0)
+  {
+    return;
+  }
+  @Cmd::cruiseSetSpeedCmd = 30;
+  @Cmd::cruise30 = 0;
+}
+
+on sysvar Cmd::cruise50
+{
+  if (((int)@Cmd::cruise50) <= 0)
+  {
+    return;
+  }
+  @Cmd::cruiseSetSpeedCmd = 50;
+  @Cmd::cruise50 = 0;
+}
+
+on sysvar Cmd::cruise80
+{
+  if (((int)@Cmd::cruise80) <= 0)
+  {
+    return;
+  }
+  @Cmd::cruiseSetSpeedCmd = 80;
+  @Cmd::cruise80 = 0;
+}
+
+on sysvar Cmd::cruise100
+{
+  if (((int)@Cmd::cruise100) <= 0)
+  {
+    return;
+  }
+  @Cmd::cruiseSetSpeedCmd = 100;
+  @Cmd::cruise100 = 0;
+}
+
+on sysvar Inject::roadNormal
+{
+  if (((int)@Inject::roadNormal) <= 0)
+  {
+    return;
+  }
+  @Inject::roadZone = 0;
+  @Inject::roadNormal = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::roadSchool
+{
+  if (((int)@Inject::roadSchool) <= 0)
+  {
+    return;
+  }
+  @Inject::roadZone = 1;
+  @Inject::roadSchool = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::roadHighway
+{
+  if (((int)@Inject::roadHighway) <= 0)
+  {
+    return;
+  }
+  @Inject::roadZone = 2;
+  @Inject::roadHighway = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::roadGuide
+{
+  if (((int)@Inject::roadGuide) <= 0)
+  {
+    return;
+  }
+  @Inject::roadZone = 3;
+  @Inject::roadGuide = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::navOff
+{
+  if (((int)@Inject::navOff) <= 0)
+  {
+    return;
+  }
+  @Inject::navDirection = 0;
+  @Inject::navOff = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::navLeft
+{
+  if (((int)@Inject::navLeft) <= 0)
+  {
+    return;
+  }
+  @Inject::navDirection = 1;
+  @Inject::navLeft = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::navStraight
+{
+  if (((int)@Inject::navStraight) <= 0)
+  {
+    return;
+  }
+  @Inject::navDirection = 3;
+  @Inject::navStraight = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::navRight
+{
+  if (((int)@Inject::navRight) <= 0)
+  {
+    return;
+  }
+  @Inject::navDirection = 2;
+  @Inject::navRight = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::emergencyOff
+{
+  if (((int)@Inject::emergencyOff) <= 0)
+  {
+    return;
+  }
+  @Inject::emergencyActiveCmd = 0;
+  @Inject::emergencyOff = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::emergencyOn
+{
+  if (((int)@Inject::emergencyOn) <= 0)
+  {
+    return;
+  }
+  @Inject::emergencyActiveCmd = 1;
+  @Inject::emergencyOn = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::emergencyNone
+{
+  if (((int)@Inject::emergencyNone) <= 0)
+  {
+    return;
+  }
+  @Inject::emergencyType = 0;
+  @Inject::emergencyNone = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::emergencyPolice
+{
+  if (((int)@Inject::emergencyPolice) <= 0)
+  {
+    return;
+  }
+  @Inject::emergencyType = 1;
+  @Inject::emergencyPolice = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::emergencyAmb
+{
+  if (((int)@Inject::emergencyAmb) <= 0)
+  {
+    return;
+  }
+  @Inject::emergencyType = 2;
+  @Inject::emergencyAmb = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::ingressFront
+{
+  if (((int)@Inject::ingressFront) <= 0)
+  {
+    return;
+  }
+  @Inject::emergencyDirection = 0;
+  @Inject::ingressFront = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::ingressLeft
+{
+  if (((int)@Inject::ingressLeft) <= 0)
+  {
+    return;
+  }
+  @Inject::emergencyDirection = 1;
+  @Inject::ingressLeft = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::ingressRight
+{
+  if (((int)@Inject::ingressRight) <= 0)
+  {
+    return;
+  }
+  @Inject::emergencyDirection = 2;
+  @Inject::ingressRight = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::ingressRear
+{
+  if (((int)@Inject::ingressRear) <= 0)
+  {
+    return;
+  }
+  @Inject::emergencyDirection = 3;
+  @Inject::ingressRear = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::sourceAuto
+{
+  if (((int)@Inject::sourceAuto) <= 0)
+  {
+    return;
+  }
+  @Inject::emergencySourceId = 0;
+  @Inject::sourceAuto = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::sourceP1
+{
+  if (((int)@Inject::sourceP1) <= 0)
+  {
+    return;
+  }
+  @Inject::emergencySourceId = 1;
+  @Inject::sourceP1 = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::sourceA2
+{
+  if (((int)@Inject::sourceA2) <= 0)
+  {
+    return;
+  }
+  @Inject::emergencySourceId = 2;
+  @Inject::sourceA2 = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::sourceT99
+{
+  if (((int)@Inject::sourceT99) <= 0)
+  {
+    return;
+  }
+  @Inject::emergencySourceId = 99;
+  @Inject::sourceT99 = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::overrideOff
+{
+  if (((int)@Inject::overrideOff) <= 0)
+  {
+    return;
+  }
+  @Inject::manualAlertOverrideCmd = 0;
+  @Inject::overrideOff = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::overrideL1
+{
+  if (((int)@Inject::overrideL1) <= 0)
+  {
+    return;
+  }
+  @Inject::manualAlertOverrideCmd = 1;
+  @Inject::overrideL1 = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::overrideL3
+{
+  if (((int)@Inject::overrideL3) <= 0)
+  {
+    return;
+  }
+  @Inject::manualAlertOverrideCmd = 3;
+  @Inject::overrideL3 = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::overrideL6
+{
+  if (((int)@Inject::overrideL6) <= 0)
+  {
+    return;
+  }
+  @Inject::manualAlertOverrideCmd = 6;
+  @Inject::overrideL6 = 0;
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::crossOff
+{
+  if (((int)@Inject::crossOff) <= 0)
+  {
+    return;
+  }
+  @V2X::AnimationTrigger = 0;
+  @Inject::crossOff = 0;
+}
+
+on sysvar Inject::crossOn
+{
+  if (((int)@Inject::crossOn) <= 0)
+  {
+    return;
+  }
+  @V2X::AnimationTrigger = 1;
+  @Inject::crossOn = 0;
+}
+
+on sysvar Inject::zoneDistance
+{
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::speedLimit
+{
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Inject::emergencyEtaSec
+{
+  publishInputConsoleManualCompat();
+}
+
+on sysvar V2X::policePos
+{
+  publishInputConsoleManualCompat();
+}
+
+on sysvar V2X::ambulancePos
+{
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Test::scenarioStopReq
+{
+  publishInputConsoleManualCompat();
+}
+
+on sysvar Cmd::driverBeltToggle
+{
+  if (((int)@Cmd::driverBeltToggle) <= 0)
+  {
+    return;
+  }
+
+  @Test::driverBeltOff = ((((int)@Test::driverBeltOff) > 0) ? 0 : 1);
+  @Cmd::driverBeltToggle = 0;
+}
+
+on sysvar Cmd::passengerBeltToggle
+{
+  if (((int)@Cmd::passengerBeltToggle) <= 0)
+  {
+    return;
+  }
+
+  @Test::passengerBeltOff = ((((int)@Test::passengerBeltOff) > 0) ? 0 : 1);
+  @Cmd::passengerBeltToggle = 0;
+}
+
+on sysvar Test::driverBeltOff
+{
+  refreshSeatBeltOverrideFromPanel();
+}
+
+on sysvar Test::passengerBeltOff
+{
+  refreshSeatBeltOverrideFromPanel();
+}

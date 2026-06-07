@@ -1,0 +1,157 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tOmsCycle;
+  int gOccupantDetected;
+  int gChildSeatDetected;
+  int gPassengerSeatBelt;
+  int gSeatBeltWarnLevel;
+  dword gOdsRxMs;
+  dword gSeatBeltRxMs;
+  int gLastOdsInputStale;
+  int gLastSeatBeltInputStale;
+  int gLastDetected;
+  int gLastChildWarn;
+  int gLastSeatBelt;
+  int gLastWarnLevel;
+  int gLastAlert;
+}
+
+void traceOmsInputHealth(int odsInputStale, int seatBeltInputStale)
+{
+  if (odsInputStale != gLastOdsInputStale)
+  {
+    if (odsInputStale == 1)
+    {
+      write("[OMS] ods input stale");
+    }
+    else
+    {
+      write("[OMS] ods input restored");
+    }
+    gLastOdsInputStale = odsInputStale;
+  }
+
+  if (seatBeltInputStale != gLastSeatBeltInputStale)
+  {
+    if (seatBeltInputStale == 1)
+    {
+      write("[OMS] seat-belt input stale");
+    }
+    else
+    {
+      write("[OMS] seat-belt input restored");
+    }
+    gLastSeatBeltInputStale = seatBeltInputStale;
+  }
+}
+
+void publishOmsState()
+{
+  message frmOmsStateMsg mOms;
+  int odsInputStale;
+  int seatBeltInputStale;
+  int childSeatDetected;
+  int passengerSeatBelt;
+  int seatBeltWarnLevel;
+  int detected;
+  int childWarn;
+  int alertActive;
+
+  odsInputStale = (ethIsRecentTick(gOdsRxMs, 300) == 1) ? 0 : 1;
+  seatBeltInputStale = (ethIsRecentTick(gSeatBeltRxMs, 300) == 1) ? 0 : 1;
+  traceOmsInputHealth(odsInputStale, seatBeltInputStale);
+
+  detected = gOccupantDetected;
+  childSeatDetected = gChildSeatDetected;
+  passengerSeatBelt = gPassengerSeatBelt;
+  seatBeltWarnLevel = gSeatBeltWarnLevel;
+
+  if (odsInputStale == 1)
+  {
+    detected = 0;
+    childSeatDetected = 0;
+  }
+  if (seatBeltInputStale == 1)
+  {
+    passengerSeatBelt = 1;
+    seatBeltWarnLevel = 0;
+  }
+
+  childWarn = (detected == 1 && childSeatDetected == 1) ? 1 : 0;
+  alertActive = (detected == 1 && seatBeltWarnLevel >= 2) ? 1 : 0;
+
+  mOms.OccupantDetected = detected;
+  mOms.ChildPresenceWarn = childWarn;
+  mOms.PassengerSeatBelt = passengerSeatBelt;
+  mOms.SeatBeltWarnLevel = seatBeltWarnLevel;
+  mOms.OccupantAlertActive = alertActive;
+  output(mOms);
+
+  if (detected != gLastDetected ||
+      childWarn != gLastChildWarn ||
+      passengerSeatBelt != gLastSeatBelt ||
+      seatBeltWarnLevel != gLastWarnLevel ||
+      alertActive != gLastAlert)
+  {
+    write("[OMS] detected=%d child=%d belt=%d warn=%d alert=%d",
+          detected,
+          childWarn,
+          passengerSeatBelt,
+          seatBeltWarnLevel,
+          alertActive);
+    gLastDetected = detected;
+    gLastChildWarn = childWarn;
+    gLastSeatBelt = passengerSeatBelt;
+    gLastWarnLevel = seatBeltWarnLevel;
+    gLastAlert = alertActive;
+  }
+}
+
+on start
+{
+  gOccupantDetected = 0;
+  gChildSeatDetected = 0;
+  gPassengerSeatBelt = 1;
+  gSeatBeltWarnLevel = 0;
+  gOdsRxMs = 0;
+  gSeatBeltRxMs = 0;
+  gLastOdsInputStale = 0;
+  gLastSeatBeltInputStale = 0;
+  gLastDetected = -1;
+  gLastChildWarn = -1;
+  gLastSeatBelt = -1;
+  gLastWarnLevel = -1;
+  gLastAlert = -1;
+  setTimer(tOmsCycle, 100);
+  write("[OMS] start");
+}
+
+on message frmOdsStateMsg
+{
+  gOccupantDetected = clampRange((int)this.OccupantDetected, 0, 1);
+  gChildSeatDetected = clampRange((int)this.ChildSeatDetected, 0, 1);
+  gOdsRxMs = getSimulationTimeMs();
+}
+
+on message frmSeatBeltStateMsg
+{
+  gPassengerSeatBelt = clampRange((int)this.PassengerSeatBelt, 0, 1);
+  gSeatBeltWarnLevel = clampRange((int)this.SeatBeltWarnLvl, 0, 3);
+  gSeatBeltRxMs = getSimulationTimeMs();
+}
+
+on timer tOmsCycle
+{
+  publishOmsState();
+  setTimer(tOmsCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tOmsCycle);
+}

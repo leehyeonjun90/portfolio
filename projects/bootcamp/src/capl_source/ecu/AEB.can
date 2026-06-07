@@ -1,0 +1,224 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tAebDomainCycle;
+  int gFcwState;
+  int gAebRequest;
+  int gDecelAssistReq;
+  int gObjectRiskClass;
+  int gTtcBucket;
+  int gSelectedAlertLevel;
+  dword gFcaRxMs;
+  int gWarningPathStatus;
+  int gE2eHealthState;
+  int gFailSafeMode;
+  dword gFailSafeRxTsMs;
+  int gLastFcaInputStale;
+  int gLastFailSafeInputStale;
+  int gLastArmed;
+  int gLastStopReq;
+  int gLastDecelProfile;
+  int gLastHealth;
+  int gLastRiskClass;
+}
+
+void traceAebInputHealth(int fcaInputStale, int failSafeInputStale)
+{
+  if (fcaInputStale != gLastFcaInputStale)
+  {
+    if (fcaInputStale == 1)
+    {
+      write("[AEB] fca input stale");
+    }
+    else
+    {
+      write("[AEB] fca input restored");
+    }
+    gLastFcaInputStale = fcaInputStale;
+  }
+
+  if (failSafeInputStale != gLastFailSafeInputStale)
+  {
+    if (failSafeInputStale == 1)
+    {
+      write("[AEB] fail-safe input stale");
+    }
+    else
+    {
+      write("[AEB] fail-safe input restored");
+    }
+    gLastFailSafeInputStale = failSafeInputStale;
+  }
+}
+
+int aebPathReady()
+{
+  if (ethIsRecentTick(gFailSafeRxTsMs, 300) == 0)
+  {
+    return 0;
+  }
+  if (gWarningPathStatus >= 2 || gE2eHealthState == 0 || gFailSafeMode >= 2)
+  {
+    return 0;
+  }
+  return 1;
+}
+
+void publishAebDomainState()
+{
+  message frmAebDomainStateMsg mAeb;
+  int fcaInputStale;
+  int failSafeInputStale;
+  int fcwState;
+  int aebRequest;
+  int decelAssistReq;
+  int objectRiskClass;
+  int ttcBucket;
+  int selectedAlertLevel;
+  int aebArmed;
+  int stopReq;
+  int decelProfile;
+  int domainHealth;
+  int failSafeMode;
+  int pathReady;
+
+  fcaInputStale = (ethIsRecentTick(gFcaRxMs, 300) == 1) ? 0 : 1;
+  failSafeInputStale = (ethIsRecentTick(gFailSafeRxTsMs, 300) == 1) ? 0 : 1;
+  traceAebInputHealth(fcaInputStale, failSafeInputStale);
+
+  failSafeMode = gFailSafeMode;
+  pathReady = aebPathReady();
+  fcwState = gFcwState;
+  aebRequest = gAebRequest;
+  decelAssistReq = gDecelAssistReq;
+  objectRiskClass = gObjectRiskClass;
+  ttcBucket = gTtcBucket;
+  selectedAlertLevel = gSelectedAlertLevel;
+  if (fcaInputStale == 1)
+  {
+    fcwState = 0;
+    aebRequest = 0;
+    decelAssistReq = 0;
+    objectRiskClass = 0;
+    ttcBucket = 255;
+    selectedAlertLevel = 0;
+  }
+  if (failSafeInputStale == 1)
+  {
+    failSafeMode = 2;
+  }
+
+  aebArmed = (fcwState >= 1 && pathReady == 1) ? 1 : 0;
+  stopReq = (aebRequest == 1 && pathReady == 1) ? 1 : 0;
+
+  decelProfile = 0;
+  if (decelAssistReq == 1 && pathReady == 1)
+  {
+    decelProfile = 1;
+    if (objectRiskClass >= 4 || ttcBucket <= 10)
+    {
+      decelProfile = 3;
+    }
+    else if (objectRiskClass >= 2 || ttcBucket <= 20)
+    {
+      decelProfile = 2;
+    }
+  }
+
+  domainHealth = 2;
+  if (pathReady == 0)
+  {
+    domainHealth = 0;
+  }
+  else if (failSafeMode == 1 || fcaInputStale == 1)
+  {
+    domainHealth = 1;
+  }
+
+  mAeb.AebArmed = aebArmed;
+  mAeb.StopReq = stopReq;
+  mAeb.DecelProfile = clampRange(decelProfile, 0, 3);
+  mAeb.DomainHealth = clampRange(domainHealth, 0, 3);
+  mAeb.ObjectRiskClass = clampRange(objectRiskClass, 0, 7);
+  mAeb.SelectedAlertLevel = clampRange(selectedAlertLevel, 0, 7);
+  mAeb.TtcBucket = clampRange(ttcBucket, 0, 255);
+  output(mAeb);
+
+  if (aebArmed != gLastArmed ||
+      stopReq != gLastStopReq ||
+      decelProfile != gLastDecelProfile ||
+      domainHealth != gLastHealth ||
+      objectRiskClass != gLastRiskClass)
+  {
+    write("[AEB] armed=%d stop=%d profile=%d health=%d risk=%d ttc=%d",
+          aebArmed,
+          stopReq,
+          decelProfile,
+          domainHealth,
+          objectRiskClass,
+          ttcBucket);
+    gLastArmed = aebArmed;
+    gLastStopReq = stopReq;
+    gLastDecelProfile = decelProfile;
+    gLastHealth = domainHealth;
+    gLastRiskClass = objectRiskClass;
+  }
+}
+
+on start
+{
+  gFcwState = 0;
+  gAebRequest = 0;
+  gDecelAssistReq = 0;
+  gObjectRiskClass = 0;
+  gTtcBucket = 255;
+  gSelectedAlertLevel = 0;
+  gFcaRxMs = 0;
+  gWarningPathStatus = 1;
+  gE2eHealthState = 1;
+  gFailSafeMode = 0;
+  gFailSafeRxTsMs = 0;
+  gLastFcaInputStale = 0;
+  gLastFailSafeInputStale = 0;
+  gLastArmed = -1;
+  gLastStopReq = -1;
+  gLastDecelProfile = -1;
+  gLastHealth = -1;
+  gLastRiskClass = -1;
+  setTimer(tAebDomainCycle, 100);
+  write("[AEB] start");
+}
+
+on timer tAebDomainCycle
+{
+  publishAebDomainState();
+  setTimer(tAebDomainCycle, 100);
+}
+
+on message frmFcaStateMsg
+{
+  gFcwState = clampRange((int)this.FcwState, 0, 3);
+  gAebRequest = clampRange((int)this.AebRequest, 0, 1);
+  gDecelAssistReq = clampRange((int)this.DecelAssistReq, 0, 1);
+  gObjectRiskClass = clampRange((int)this.ObjectRiskClass, 0, 7);
+  gTtcBucket = clampRange((int)this.TtcBucket, 0, 255);
+  gSelectedAlertLevel = clampRange((int)this.SelectedAlertLevel, 0, 7);
+  gFcaRxMs = getSimulationTimeMs();
+}
+
+on message frmAdasDomainStateMsg
+{
+  gWarningPathStatus = clampRange((int)this.WarningPathStatus, 0, 2);
+  gE2eHealthState = clampRange((int)this.E2eHealthState, 0, 2);
+  gFailSafeMode = clampRange((int)this.FailSafeMode, 0, 2);
+  gFailSafeRxTsMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tAebDomainCycle);
+}

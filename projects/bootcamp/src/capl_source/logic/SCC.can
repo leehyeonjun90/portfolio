@@ -1,0 +1,263 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tSccCycle;
+  int gVehicleSpeed;
+  int gDriveState;
+  int gNavSpeedLimit;
+  int gRiskLevel;
+  int gFailSafeMode;
+  int gSelectedAlertLevel;
+  int gEmergencyContext;
+  dword gDecelAssistRxMs;
+  dword gSelectedAlertRxMs;
+  dword gNavStateRxMs;
+  dword gPanelCruiseRxMs;
+  int gLastCruiseState;
+  int gLastGapLevel;
+  int gLastCruiseSetSpeed;
+  int gPanelCruiseStateCmd;
+  int gPanelCruiseSetSpeedCmd;
+  int gPanelCruiseSticky;
+  int gLastInternalCruiseState;
+  int gLastInternalCruiseSetSpeed;
+  dword gLastInternalCruiseTxMs;
+}
+
+void publishCruiseState()
+{
+  message frmCruiseStateMsg mCruise;
+  int speedLimit;
+  int riskLevel;
+  int failSafeMode;
+  int selectedAlertLevel;
+  int emergencyContext;
+  int cruiseState;
+  int gapLevel;
+  int cruiseSetSpeed;
+  int manualMode;
+  int manualCruiseStateCmd;
+  int manualCruiseSetSpeedCmd;
+
+  if (ethIsRecentTick(gNavStateRxMs, 300) == 1)
+  {
+    speedLimit = clampRange(gNavSpeedLimit, 0, 255);
+  }
+  else
+  {
+    speedLimit = 0;
+  }
+  if (ethIsRecentTick(gDecelAssistRxMs, 300) == 1)
+  {
+    riskLevel = clampRange(gRiskLevel, 0, 100);
+    failSafeMode = clampRange(gFailSafeMode, 0, 2);
+    emergencyContext = clampRange(gEmergencyContext, 0, 2);
+  }
+  else
+  {
+    riskLevel = 0;
+    failSafeMode = 1;
+    emergencyContext = 0;
+  }
+  if (ethIsRecentTick(gSelectedAlertRxMs, 300) == 1)
+  {
+    selectedAlertLevel = clampRange(gSelectedAlertLevel, 0, 7);
+  }
+  else
+  {
+    selectedAlertLevel = 0;
+  }
+
+  if (speedLimit == 0)
+  {
+    speedLimit = 60;
+  }
+
+  manualCruiseStateCmd = clampRange((int)@Cmd::cruiseStateCmd, 0, 2);
+  manualCruiseSetSpeedCmd = clampRange((int)@Cmd::cruiseSetSpeedCmd, 0, 255);
+  manualMode = (((int)@Test::scenarioActiveId) == 0) ? 1 : 0;
+  if (manualMode == 0)
+  {
+    gPanelCruiseSticky = 0;
+    gPanelCruiseStateCmd = 0;
+    gPanelCruiseSetSpeedCmd = 0;
+  }
+
+  if (manualMode == 1 && gPanelCruiseSticky == 1)
+  {
+    cruiseState = clampRange(gPanelCruiseStateCmd, 0, 3);
+    gapLevel = (cruiseState >= 2) ? 3 : 2;
+    cruiseSetSpeed = (gPanelCruiseSetSpeedCmd > 0) ? gPanelCruiseSetSpeedCmd : speedLimit;
+  }
+  else if (manualCruiseStateCmd > 0)
+  {
+    cruiseState = manualCruiseStateCmd;
+    gapLevel = (manualCruiseStateCmd >= 2) ? 3 : 2;
+    cruiseSetSpeed = (manualCruiseSetSpeedCmd > 0) ? manualCruiseSetSpeedCmd : speedLimit;
+  }
+  else
+  {
+    cruiseState = 0;
+    gapLevel = 2;
+    cruiseSetSpeed = speedLimit;
+
+    if (gDriveState == 3 && failSafeMode == 0)
+    {
+      cruiseState = 1;
+
+      if (riskLevel >= 70 || selectedAlertLevel >= 6 || emergencyContext > 0)
+      {
+        cruiseState = 2;
+        gapLevel = 3;
+        cruiseSetSpeed = gVehicleSpeed - 10;
+      }
+      else if (riskLevel >= 40 || selectedAlertLevel >= 4)
+      {
+        cruiseState = 2;
+        gapLevel = 3;
+        cruiseSetSpeed = gVehicleSpeed - 5;
+      }
+    }
+  }
+
+  if (cruiseSetSpeed < 30 && cruiseState > 0)
+  {
+    cruiseSetSpeed = 30;
+  }
+  if (cruiseSetSpeed > speedLimit)
+  {
+    cruiseSetSpeed = speedLimit;
+  }
+  cruiseSetSpeed = clampRange(cruiseSetSpeed, 0, 255);
+
+  mCruise.CruiseState = cruiseState;
+  mCruise.GapLevel = gapLevel;
+  mCruise.CruiseSetSpeed = cruiseSetSpeed;
+  gLastInternalCruiseState = cruiseState;
+  gLastInternalCruiseSetSpeed = cruiseSetSpeed;
+  gLastInternalCruiseTxMs = getSimulationTimeMs();
+  output(mCruise);
+  @Powertrain::cruiseState = cruiseState;
+  @Powertrain::cruiseSetSpeed = cruiseSetSpeed;
+
+  if (cruiseState != gLastCruiseState ||
+      gapLevel != gLastGapLevel ||
+      cruiseSetSpeed != gLastCruiseSetSpeed)
+  {
+    write("[SCC] cruise=%d gap=%d set=%d risk=%d failSafe=%d alert=%d ems=%d speed=%d",
+          cruiseState,
+          gapLevel,
+          cruiseSetSpeed,
+          riskLevel,
+          failSafeMode,
+          selectedAlertLevel,
+          emergencyContext,
+          gVehicleSpeed);
+    gLastCruiseState = cruiseState;
+    gLastGapLevel = gapLevel;
+    gLastCruiseSetSpeed = cruiseSetSpeed;
+  }
+}
+
+on start
+{
+  gVehicleSpeed = 0;
+  gDriveState = 0;
+  gNavSpeedLimit = 0;
+  gRiskLevel = 0;
+  gFailSafeMode = 1;
+  gSelectedAlertLevel = 0;
+  gEmergencyContext = 0;
+  gDecelAssistRxMs = 0;
+  gSelectedAlertRxMs = 0;
+  gNavStateRxMs = 0;
+  gPanelCruiseRxMs = 0;
+  gLastCruiseState = -1;
+  gLastGapLevel = -1;
+  gLastCruiseSetSpeed = -1;
+  gPanelCruiseStateCmd = 0;
+  gPanelCruiseSetSpeedCmd = 0;
+  gPanelCruiseSticky = 0;
+  gLastInternalCruiseState = -1;
+  gLastInternalCruiseSetSpeed = -1;
+  gLastInternalCruiseTxMs = 0;
+  /* Preserve donor pedal-panel command seams across measurement start.
+     SCC owns cruise state/readback, not the panel command values themselves. */
+  @Powertrain::cruiseState = 0;
+  @Powertrain::cruiseSetSpeed = 0;
+  setTimer(tSccCycle, 50);
+  write("[SCC] start");
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+}
+
+on message frmNavModuleStateMsg
+{
+  gNavSpeedLimit = clampRange((int)this.NavSpeedLimit, 0, 255);
+  gNavStateRxMs = getSimulationTimeMs();
+}
+
+on message frmAdasDomainStateMsg
+{
+  gRiskLevel = clampRange((int)this.RiskLevel, 0, 100);
+  gFailSafeMode = clampRange((int)this.FailSafeMode, 0, 2);
+  gEmergencyContext = clampRange((int)this.EmergencyContext, 0, 2);
+  gSelectedAlertLevel = clampRange((int)this.SelectedAlertLevel, 0, 7);
+  gDecelAssistRxMs = getSimulationTimeMs();
+  gSelectedAlertRxMs = gDecelAssistRxMs;
+}
+
+on message frmCruiseStateMsg
+{
+  int cruiseState;
+  int cruiseSetSpeed;
+
+  cruiseState = clampRange((int)this.CruiseState, 0, 3);
+  cruiseSetSpeed = clampRange((int)this.CruiseSetSpeed, 0, 255);
+
+  if (ethIsRecentTick(gLastInternalCruiseTxMs, 100) == 1 &&
+      cruiseState == gLastInternalCruiseState &&
+      cruiseSetSpeed == gLastInternalCruiseSetSpeed)
+  {
+    return;
+  }
+
+  if (cruiseSetSpeed > 0)
+  {
+    gPanelCruiseSetSpeedCmd = cruiseSetSpeed;
+  }
+
+  if (cruiseState > 0)
+  {
+    gPanelCruiseStateCmd = cruiseState;
+    gPanelCruiseSticky = 1;
+  }
+  else if (cruiseSetSpeed == 0)
+  {
+    gPanelCruiseStateCmd = 0;
+    gPanelCruiseSetSpeedCmd = 0;
+    gPanelCruiseSticky = 0;
+  }
+
+  gPanelCruiseRxMs = getSimulationTimeMs();
+}
+
+on timer tSccCycle
+{
+
+  publishCruiseState();
+  setTimer(tSccCycle, 50);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tSccCycle);
+}

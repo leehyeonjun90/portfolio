@@ -1,0 +1,183 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tFradarCycle;
+  int gTrackValid;
+  int gConfidence;
+  int gRangeM;
+  int gRelSpeed;
+  dword gObjectInputRxMs;
+  int gWarningPathStatus;
+  int gE2eHealthState;
+  int gFailSafeMode;
+  dword gFailSafeRxMs;
+  int gLastObjectInputStale;
+  int gLastHealth;
+  int gLastDetected;
+  int gLastDistanceBucket;
+  int gLastRelSpeedBucket;
+  int gLastPathReady;
+}
+
+int fradarPathReady()
+{
+  if (ethIsRecentTick(gFailSafeRxMs, 300) == 0)
+  {
+    return 0;
+  }
+  if (gWarningPathStatus >= 2 || gE2eHealthState == 0 || gFailSafeMode >= 2)
+  {
+    return 0;
+  }
+  return 1;
+}
+
+void traceFradarInputHealth(int objectInputStale)
+{
+  if (objectInputStale != gLastObjectInputStale)
+  {
+    if (objectInputStale == 1)
+    {
+      write("[FRADAR] object input stale");
+    }
+    else
+    {
+      write("[FRADAR] object input restored");
+    }
+    gLastObjectInputStale = objectInputStale;
+  }
+}
+
+void publishFradarState()
+{
+  message frmFradarStateMsg mFradar;
+  int objectInputStale;
+  int trackValid;
+  int confidence;
+  int rangeM;
+  int relSpeed;
+  int health;
+  int detected;
+  int distanceBucket;
+  int relSpeedBucket;
+  int pathReady;
+
+  objectInputStale = (ethIsRecentTick(gObjectInputRxMs, 300) == 1) ? 0 : 1;
+  traceFradarInputHealth(objectInputStale);
+
+  trackValid = gTrackValid;
+  confidence = gConfidence;
+  rangeM = gRangeM;
+  relSpeed = gRelSpeed;
+  pathReady = fradarPathReady();
+
+  if (objectInputStale == 1)
+  {
+    trackValid = 0;
+    confidence = 0;
+    rangeM = 0;
+    relSpeed = 0;
+  }
+
+  detected = trackValid;
+  if (pathReady == 0 || objectInputStale == 1)
+  {
+    health = 0;
+  }
+  else if (trackValid == 1 && confidence < 30)
+  {
+    health = 1;
+  }
+  else
+  {
+    health = 2;
+  }
+
+  distanceBucket = (detected == 1) ? clampRange(rangeM, 0, 255) : 0;
+  relSpeedBucket = (detected == 1) ? clampRange(relSpeed + 128, 0, 255) : 128;
+  if (pathReady == 0)
+  {
+    detected = 0;
+    distanceBucket = 0;
+    relSpeedBucket = 128;
+  }
+
+  mFradar.RadarHealth = clampRange(health, 0, 3);
+  mFradar.ObjectDetected = detected;
+  mFradar.DistanceBucket = distanceBucket;
+  mFradar.RelSpeedBucket = relSpeedBucket;
+  output(mFradar);
+
+  if (pathReady != gLastPathReady ||
+      health != gLastHealth ||
+      detected != gLastDetected ||
+      distanceBucket != gLastDistanceBucket ||
+      relSpeedBucket != gLastRelSpeedBucket)
+  {
+    write("[FRADAR] path=%d health=%d detected=%d range=%d rel=%d conf=%d",
+          pathReady,
+          health,
+          detected,
+          rangeM,
+          relSpeed,
+          confidence);
+    gLastPathReady = pathReady;
+    gLastHealth = health;
+    gLastDetected = detected;
+    gLastDistanceBucket = distanceBucket;
+    gLastRelSpeedBucket = relSpeedBucket;
+  }
+}
+
+on start
+{
+  gTrackValid = 0;
+  gConfidence = 0;
+  gRangeM = 0;
+  gRelSpeed = 0;
+  gObjectInputRxMs = 0;
+  gWarningPathStatus = 1;
+  gE2eHealthState = 1;
+  gFailSafeMode = 1;
+  gFailSafeRxMs = 0;
+  gLastObjectInputStale = 0;
+  gLastPathReady = -1;
+  gLastHealth = -1;
+  gLastDetected = -1;
+  gLastDistanceBucket = -1;
+  gLastRelSpeedBucket = -1;
+  setTimer(tFradarCycle, 100);
+  write("[FRADAR] start");
+}
+
+on timer tFradarCycle
+{
+  publishFradarState();
+  setTimer(tFradarCycle, 100);
+}
+
+on message frmFradarInputMsg
+{
+  gTrackValid = clampRange((int)this.ObjectTrackValid, 0, 1);
+  gRangeM = clampRange((int)this.DistanceBucket, 0, 255);
+  gRelSpeed = clampRange((int)this.RelSpeedBucket - 128, -128, 127);
+  gConfidence = clampRange((int)this.Confidence, 0, 100);
+  gObjectInputRxMs = getSimulationTimeMs();
+}
+
+on message frmAdasDomainStateMsg
+{
+  gWarningPathStatus = clampRange((int)this.WarningPathStatus, 0, 2);
+  gE2eHealthState = clampRange((int)this.E2eHealthState, 0, 2);
+  gFailSafeMode = clampRange((int)this.FailSafeMode, 0, 2);
+  gFailSafeRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tFradarCycle);
+}

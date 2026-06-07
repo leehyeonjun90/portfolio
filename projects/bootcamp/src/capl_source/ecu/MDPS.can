@@ -1,0 +1,186 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tMdpsCycle;
+  long gEthTxSocket;
+  dword gEthTargetIp;
+  int gSteeringInput;
+  int gSpeedNorm;
+  dword gSteeringRxMs;
+  dword gVehicleStateRxMs;
+  int gLastSteeringInputStale;
+  int gLastVehicleInputStale;
+  int gPrevSteering;
+}
+
+int deriveManualSteeringInputFromAngle(int steeringAngle)
+{
+  steeringAngle = clampRange(steeringAngle, 0, 138);
+  if (steeringAngle <= 54 || steeringAngle >= 84)
+  {
+    return 1;
+  }
+  return 0;
+}
+
+int getMdpsTxPort()
+{
+  return ethBackbonePort() + 3;
+}
+
+dword getMdpsLocalIp()
+{
+  return IpGetAddressAsNumber("192.168.1.17");
+}
+
+void publishBackboneSteeringState(int steeringAngleRaw, int steeringQuality)
+{
+  char frame[3];
+  int steeringInput;
+
+  steeringInput = clampRange(gSteeringInput, 0, 1);
+  if (gEthTxSocket == ethInvalidSocket())
+  {
+    return;
+  }
+
+  ethInitFrame(frame, ethMsgSteering(), 1);
+  ethSetU8(frame, 0, steeringInput);
+  ethSendFrame(gEthTxSocket, gEthTargetIp, ethMsgSteering(), frame, 1);
+}
+
+void traceMdpsInputHealth(int steeringInputStale, int vehicleInputStale)
+{
+  if (steeringInputStale != gLastSteeringInputStale)
+  {
+    if (steeringInputStale == 1)
+    {
+      write("[MDPS] steering input stale");
+    }
+    else
+    {
+      write("[MDPS] steering input restored");
+    }
+    gLastSteeringInputStale = steeringInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[MDPS] vehicle-state input stale");
+    }
+    else
+    {
+      write("[MDPS] vehicle-state input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+on start
+{
+  gEthTxSocket = ethOpenPreferredNodeSocket(getMdpsLocalIp(), getMdpsTxPort());
+  gEthTargetIp = ethGetDefaultIpAddress();
+  gSteeringInput = 0;
+  gSpeedNorm = 0;
+  gSteeringRxMs = 0;
+  gVehicleStateRxMs = 0;
+  gLastSteeringInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gPrevSteering = -1;
+  if (gEthTxSocket == ethInvalidSocket())
+  {
+    write("[MDPS] tx socket unavailable");
+  }
+  setTimer(tMdpsCycle, 50);
+  write("[MDPS] start");
+}
+
+on message frmSteeringCanMsg
+{
+  gSteeringInput = clampRange((int)this.SteeringInput, 0, 1);
+  gSteeringRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gSpeedNorm = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gVehicleStateRxMs = getSimulationTimeMs();
+}
+
+on timer tMdpsCycle
+{
+  message frmSteeringStateCanMsg mSteerState;
+  message frmSteeringTorqueMsg mSteerTorque;
+  message frmEpsStateMsg mEps;
+  int steeringInputStale;
+  int vehicleInputStale;
+  int steeringInput;
+  int manualMode;
+  int speedNorm;
+  int steeringAngleRaw;
+  int assistLevel;
+  int steeringTorque;
+
+  steeringInputStale = (ethIsRecentTick(gSteeringRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleStateRxMs, 300) == 1) ? 0 : 1;
+  traceMdpsInputHealth(steeringInputStale, vehicleInputStale);
+
+  steeringInput = gSteeringInput;
+  speedNorm = gSpeedNorm;
+  manualMode = (((int)@Test::scenarioActiveId) == 0) ? 1 : 0;
+  if (steeringInputStale == 1)
+  {
+    steeringInput = 0;
+  }
+  if (vehicleInputStale == 1)
+  {
+    speedNorm = 0;
+  }
+
+  if (manualMode == 1)
+  {
+    steeringInput = deriveManualSteeringInputFromAngle((int)@Chassis::steeringAngle);
+    speedNorm = clampRange((int)@Chassis::vehicleSpeed, 0, 255);
+  }
+
+  steeringAngleRaw = steeringInput * 30;
+  assistLevel = (speedNorm > 80) ? 1 : 2;
+  steeringTorque = steeringInput * 20;
+
+  if (steeringInput != gPrevSteering)
+  {
+    write("[MDPS] input=%d assist=%d angle=%d",
+          steeringInput, assistLevel, steeringAngleRaw);
+    gPrevSteering = steeringInput;
+  }
+
+  mSteerState.SteeringState = steeringInput;
+  output(mSteerState);
+
+  mSteerTorque.SteeringTorque = steeringTorque;
+  mSteerTorque.SteeringAssistLv = assistLevel;
+  output(mSteerTorque);
+
+  mEps.EpsAssistState = assistLevel;
+  mEps.EpsFaultState = 0;
+  mEps.EpsTemp = 55;
+  output(mEps);
+
+  gSpeedNorm = speedNorm;
+  publishBackboneSteeringState(steeringAngleRaw, (mEps.EpsFaultState == 0) ? 3 : 1);
+
+  setTimer(tMdpsCycle, 50);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tMdpsCycle);
+  ethCloseSocket(gEthTxSocket);
+  gEthTxSocket = ethInvalidSocket();
+}

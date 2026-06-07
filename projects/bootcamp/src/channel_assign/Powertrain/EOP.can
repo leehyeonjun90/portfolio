@@ -1,0 +1,181 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tEopCycle;
+  int gEngineRpm;
+  int gOilTemp;
+  int gDriveMode;
+  int gDriveState;
+  dword gEngineTempRxMs;
+  dword gDriveModeRxMs;
+  dword gVehicleRxMs;
+  int gLastEngineTempInputStale;
+  int gLastDriveModeInputStale;
+  int gLastVehicleInputStale;
+  int gLastState;
+  long gLastPumpRpm;
+  int gLastPressure;
+}
+
+void traceEopInputHealth(int engineTempInputStale, int driveModeInputStale, int vehicleInputStale)
+{
+  if (engineTempInputStale != gLastEngineTempInputStale)
+  {
+    if (engineTempInputStale == 1)
+    {
+      write("[EOP] engine-temp input stale");
+    }
+    else
+    {
+      write("[EOP] engine-temp input restored");
+    }
+    gLastEngineTempInputStale = engineTempInputStale;
+  }
+
+  if (driveModeInputStale != gLastDriveModeInputStale)
+  {
+    if (driveModeInputStale == 1)
+    {
+      write("[EOP] drive-mode input stale");
+    }
+    else
+    {
+      write("[EOP] drive-mode input restored");
+    }
+    gLastDriveModeInputStale = driveModeInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[EOP] vehicle input stale");
+    }
+    else
+    {
+      write("[EOP] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+on start
+{
+  gEngineRpm = 0;
+  gOilTemp = 20;
+  gDriveMode = 0;
+  gDriveState = 0;
+  gEngineTempRxMs = 0;
+  gDriveModeRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastEngineTempInputStale = 0;
+  gLastDriveModeInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastState = -1;
+  gLastPumpRpm = -1;
+  gLastPressure = -1;
+  setTimer(tEopCycle, 100);
+  write("[EOP] start");
+}
+
+on message frmEngineSpeedTempMsg
+{
+  gEngineRpm = clampRange((int)this.EngineRpm, 0, 65535);
+  gOilTemp = clampRange((int)this.OilTemp, 0, 255);
+  gEngineTempRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleModeMsg
+{
+  gDriveMode = clampRange((int)this.DriveMode, 0, 7);
+  gDriveModeRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on timer tEopCycle
+{
+  message frmEopStateMsg mEop;
+  int engineTempInputStale;
+  int driveModeInputStale;
+  int vehicleInputStale;
+  int driveState;
+  int engineRpm;
+  int oilTemp;
+  int driveMode;
+  int eopState;
+  long pumpRpm;
+  int oilPressure;
+  int tempPenalty;
+
+  engineTempInputStale = (ethIsRecentTick(gEngineTempRxMs, 300) == 1) ? 0 : 1;
+  driveModeInputStale = (ethIsRecentTick(gDriveModeRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  traceEopInputHealth(engineTempInputStale, driveModeInputStale, vehicleInputStale);
+
+  engineRpm = gEngineRpm;
+  oilTemp = gOilTemp;
+  driveMode = gDriveMode;
+  driveState = gDriveState;
+  if (engineTempInputStale == 1)
+  {
+    engineRpm = 0;
+    oilTemp = 20;
+  }
+  if (driveModeInputStale == 1)
+  {
+    driveMode = 0;
+  }
+  if (vehicleInputStale == 1)
+  {
+    driveState = (engineRpm > 0) ? 3 : 0;
+  }
+
+  if (engineRpm > 0 || driveState > 0)
+  {
+    eopState = 2;
+    pumpRpm = 800 + (engineRpm / 4) + (driveMode * 100);
+  }
+  else
+  {
+    eopState = 0;
+    pumpRpm = 0;
+  }
+
+  tempPenalty = (oilTemp > 100) ? (oilTemp - 100) : 0;
+  oilPressure = (eopState == 0) ? 0 : clampRange(80 + (engineRpm / 60) - tempPenalty, 0, 255);
+
+  mEop.EopState = clampRange(eopState, 0, 7);
+  mEop.PumpRpm = clampRange((int)pumpRpm, 0, 65535);
+  mEop.OilPressure = oilPressure;
+  output(mEop);
+
+  if (mEop.EopState != gLastState ||
+      mEop.PumpRpm != gLastPumpRpm ||
+      mEop.OilPressure != gLastPressure)
+  {
+    write("[EOP] state=%d rpm=%d pressure=%d oilTemp=%d",
+          mEop.EopState,
+          mEop.PumpRpm,
+          mEop.OilPressure,
+          oilTemp);
+    gLastState = mEop.EopState;
+    gLastPumpRpm = mEop.PumpRpm;
+    gLastPressure = mEop.OilPressure;
+  }
+
+  setTimer(tEopCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tEopCycle);
+}

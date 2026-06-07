@@ -1,0 +1,223 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tMassageSeatCycle;
+  int gSeatPos;
+  int gSeatHeatLvl;
+  int gSeatVentLvl;
+  int gDriverSeatBelt;
+  int gVehicleSpeed;
+  dword gSeatDrvRxMs;
+  dword gSeatBeltRxMs;
+  dword gVehicleRxMs;
+  int gLastSeatDrvInputStale;
+  int gLastSeatBeltInputStale;
+  int gLastVehicleInputStale;
+  int gLastMode;
+  int gLastIntensity;
+  int gLastOccupancy;
+  int gLastAlertMode;
+  int gLastDriveComfortMode;
+}
+
+void traceMscInputHealth(int seatDrvInputStale, int seatBeltInputStale, int vehicleInputStale)
+{
+  if (seatDrvInputStale != gLastSeatDrvInputStale)
+  {
+    if (seatDrvInputStale == 1)
+    {
+      write("[MSC] seat-driver input stale");
+    }
+    else
+    {
+      write("[MSC] seat-driver input restored");
+    }
+    gLastSeatDrvInputStale = seatDrvInputStale;
+  }
+
+  if (seatBeltInputStale != gLastSeatBeltInputStale)
+  {
+    if (seatBeltInputStale == 1)
+    {
+      write("[MSC] seat-belt input stale");
+    }
+    else
+    {
+      write("[MSC] seat-belt input restored");
+    }
+    gLastSeatBeltInputStale = seatBeltInputStale;
+  }
+
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[MSC] vehicle input stale");
+    }
+    else
+    {
+      write("[MSC] vehicle input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+}
+
+void publishMassageSeatState()
+{
+  message frmMassageSeatCtrlStateMsg mMassage;
+  int seatDrvInputStale;
+  int seatBeltInputStale;
+  int vehicleInputStale;
+  int vehicleSpeed;
+  int driverSeatBelt;
+  int seatPos;
+  int seatHeatLvl;
+  int seatVentLvl;
+  int occupancyState;
+  int alertComfortMode;
+  int driveComfortMode;
+  int massageMode;
+  int massageIntensity;
+
+  seatDrvInputStale = (ethIsRecentTick(gSeatDrvRxMs, 300) == 1) ? 0 : 1;
+  seatBeltInputStale = (ethIsRecentTick(gSeatBeltRxMs, 300) == 1) ? 0 : 1;
+  vehicleInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  traceMscInputHealth(seatDrvInputStale, seatBeltInputStale, vehicleInputStale);
+
+  vehicleSpeed = gVehicleSpeed;
+  driverSeatBelt = gDriverSeatBelt;
+  seatPos = gSeatPos;
+  seatHeatLvl = gSeatHeatLvl;
+  seatVentLvl = gSeatVentLvl;
+  if (vehicleInputStale == 1)
+  {
+    vehicleSpeed = 0;
+  }
+  if (seatDrvInputStale == 1)
+  {
+    seatPos = 0;
+    seatHeatLvl = 0;
+    seatVentLvl = 0;
+  }
+  if (seatBeltInputStale == 1)
+  {
+    driverSeatBelt = 1;
+  }
+
+  occupancyState = (seatPos > 5 || driverSeatBelt == 1) ? 1 : 0;
+  alertComfortMode = 0;
+  driveComfortMode = (vehicleSpeed >= 40) ? 2 : ((vehicleSpeed > 0) ? 1 : 0);
+
+  massageMode = 0;
+  if (occupancyState == 1)
+  {
+    if (seatHeatLvl >= 2 || seatVentLvl >= 2)
+    {
+      massageMode = 2;
+    }
+    else if (driveComfortMode > 0)
+    {
+      massageMode = 1;
+    }
+  }
+
+  massageIntensity = 0;
+  if (massageMode == 1)
+  {
+    massageIntensity = 20 + (driveComfortMode * 10);
+  }
+  else if (massageMode == 2)
+  {
+    massageIntensity = 30 + (seatHeatLvl * 12) + (seatVentLvl * 8);
+  }
+  else
+  {
+    massageIntensity = 0;
+  }
+  massageIntensity = clampRange(massageIntensity, 0, 100);
+
+  mMassage.MassageMode = clampRange(massageMode, 0, 7);
+  mMassage.MassageIntensity = massageIntensity;
+  mMassage.OccupancyState = occupancyState;
+  mMassage.AlertComfortMode = alertComfortMode;
+  mMassage.DriveComfortMode = clampRange(driveComfortMode, 0, 3);
+  output(mMassage);
+
+  if (massageMode != gLastMode ||
+      massageIntensity != gLastIntensity ||
+      occupancyState != gLastOccupancy ||
+      alertComfortMode != gLastAlertMode ||
+      driveComfortMode != gLastDriveComfortMode)
+  {
+    write("[MSC] mode=%d intensity=%d occ=%d alert=%d driveComfort=%d heat=%d vent=%d",
+          massageMode,
+          massageIntensity,
+          occupancyState,
+          alertComfortMode,
+          driveComfortMode,
+          seatHeatLvl,
+          seatVentLvl);
+    gLastMode = massageMode;
+    gLastIntensity = massageIntensity;
+    gLastOccupancy = occupancyState;
+    gLastAlertMode = alertComfortMode;
+    gLastDriveComfortMode = driveComfortMode;
+  }
+}
+
+on start
+{
+  gSeatPos = 0;
+  gSeatHeatLvl = 0;
+  gSeatVentLvl = 0;
+  gDriverSeatBelt = 1;
+  gVehicleSpeed = 0;
+  gSeatDrvRxMs = 0;
+  gSeatBeltRxMs = 0;
+  gVehicleRxMs = 0;
+  gLastSeatDrvInputStale = 0;
+  gLastSeatBeltInputStale = 0;
+  gLastVehicleInputStale = 0;
+  gLastMode = -1;
+  gLastIntensity = -1;
+  gLastOccupancy = -1;
+  gLastAlertMode = -1;
+  gLastDriveComfortMode = -1;
+  setTimer(tMassageSeatCycle, 100);
+  write("[MSC] start");
+}
+
+on timer tMassageSeatCycle
+{
+  publishMassageSeatState();
+  setTimer(tMassageSeatCycle, 100);
+}
+
+on message frmSeatDrvStateMsg
+{
+  gSeatPos = clampRange((int)this.SeatDrvPos, 0, 255);
+  gSeatHeatLvl = clampRange((int)this.SeatDrvHeatLvl, 0, 15);
+  gSeatVentLvl = clampRange((int)this.SeatDrvVentLvl, 0, 15);
+  gSeatDrvRxMs = getSimulationTimeMs();
+}
+
+on message frmSeatBeltStateMsg
+{
+  gDriverSeatBelt = clampRange((int)this.DriverSeatBelt, 0, 1);
+  gSeatBeltRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tMassageSeatCycle);
+}

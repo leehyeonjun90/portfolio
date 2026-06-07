@@ -1,0 +1,237 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tVoiceCycle;
+  int gAudioFocusOwner;
+  int gAudioDuckingLvl;
+  int gTmuServiceMode;
+  int gSignalBars;
+  int gClusterNotifType;
+  int gClusterNotifArg;
+  dword gAudioFocusRxMs;
+  dword gTmuServiceRxMs;
+  dword gClusterNotifRxMs;
+  int gLastAudioFocusInputStale;
+  int gLastTmuInputStale;
+  int gLastNotifInputStale;
+  int gLastVoiceAssistState;
+  int gLastWakeWordState;
+  int gLastTtsState;
+  int gLastTtsPriority;
+  int gLastTtsQueueDepth;
+}
+
+void traceVcsInputHealth(int audioFocusInputStale, int tmuInputStale, int notifInputStale)
+{
+  if (audioFocusInputStale != gLastAudioFocusInputStale)
+  {
+    if (audioFocusInputStale == 1)
+    {
+      write("[VCS] audio-focus input stale");
+    }
+    else
+    {
+      write("[VCS] audio-focus input restored");
+    }
+    gLastAudioFocusInputStale = audioFocusInputStale;
+  }
+
+  if (tmuInputStale != gLastTmuInputStale)
+  {
+    if (tmuInputStale == 1)
+    {
+      write("[VCS] tmu input stale");
+    }
+    else
+    {
+      write("[VCS] tmu input restored");
+    }
+    gLastTmuInputStale = tmuInputStale;
+  }
+
+  if (notifInputStale != gLastNotifInputStale)
+  {
+    if (notifInputStale == 1)
+    {
+      write("[VCS] cluster-notif input stale");
+    }
+    else
+    {
+      write("[VCS] cluster-notif input restored");
+    }
+    gLastNotifInputStale = notifInputStale;
+  }
+}
+
+void publishVoiceAssistState()
+{
+  message frmVoiceAssistStateMsg mVoice;
+  message frmSpeechTtsStateMsg mTts;
+  int audioFocusInputStale;
+  int tmuInputStale;
+  int notifInputStale;
+  int audioFocusOwner;
+  int audioDuckingLvl;
+  int tmuServiceMode;
+  int signalBars;
+  int clusterNotifType;
+  int clusterNotifArg;
+  int voiceAssistState;
+  int wakeWordState;
+  int ttsState;
+  int ttsPriority;
+  int ttsQueueDepth;
+
+  audioFocusInputStale = (ethIsRecentTick(gAudioFocusRxMs, 300) == 1) ? 0 : 1;
+  tmuInputStale = (ethIsRecentTick(gTmuServiceRxMs, 300) == 1) ? 0 : 1;
+  notifInputStale = (ethIsRecentTick(gClusterNotifRxMs, 300) == 1) ? 0 : 1;
+  traceVcsInputHealth(audioFocusInputStale, tmuInputStale, notifInputStale);
+
+  audioFocusOwner = gAudioFocusOwner;
+  audioDuckingLvl = gAudioDuckingLvl;
+  tmuServiceMode = gTmuServiceMode;
+  signalBars = gSignalBars;
+  clusterNotifType = gClusterNotifType;
+  clusterNotifArg = gClusterNotifArg;
+  if (audioFocusInputStale == 1)
+  {
+    audioFocusOwner = 0;
+    audioDuckingLvl = 0;
+  }
+  if (tmuInputStale == 1)
+  {
+    tmuServiceMode = 0;
+    signalBars = 0;
+  }
+  if (notifInputStale == 1)
+  {
+    clusterNotifType = 0;
+    clusterNotifArg = 0;
+  }
+
+  voiceAssistState = 0;
+  if (tmuServiceMode > 0)
+  {
+    voiceAssistState = 1;
+  }
+  if (audioFocusOwner > 0)
+  {
+    voiceAssistState = 2;
+  }
+
+  wakeWordState = 0;
+  if (tmuServiceMode == 1 && signalBars >= 2)
+  {
+    wakeWordState = 1;
+  }
+
+  ttsState = 0;
+  if (clusterNotifType > 0 && clusterNotifArg > 0 && audioFocusOwner > 0)
+  {
+    ttsState = 1;
+  }
+
+  ttsPriority = 0;
+  if (ttsState > 0)
+  {
+    ttsPriority = clusterNotifArg;
+    if (audioDuckingLvl >= 4 && ttsPriority < 4)
+    {
+      ttsPriority = 4;
+    }
+  }
+
+  ttsQueueDepth = (ttsState > 0) ? 1 : 0;
+
+  mVoice.VoiceAssistState = clampRange(voiceAssistState, 0, 7);
+  mVoice.WakeWordState = clampRange(wakeWordState, 0, 1);
+  output(mVoice);
+
+  mTts.TtsState = clampRange(ttsState, 0, 7);
+  mTts.TtsPriority = clampRange(ttsPriority, 0, 7);
+  mTts.TtsQueueDepth = clampRange(ttsQueueDepth, 0, 255);
+  output(mTts);
+
+  if (mVoice.VoiceAssistState != gLastVoiceAssistState ||
+      mVoice.WakeWordState != gLastWakeWordState ||
+      mTts.TtsState != gLastTtsState ||
+      mTts.TtsPriority != gLastTtsPriority ||
+      mTts.TtsQueueDepth != gLastTtsQueueDepth)
+  {
+    write("[VCS] voice=%d wake=%d tts=%d prio=%d q=%d focus=%d duck=%d service=%d bars=%d",
+          mVoice.VoiceAssistState,
+          mVoice.WakeWordState,
+          mTts.TtsState,
+          mTts.TtsPriority,
+          mTts.TtsQueueDepth,
+          audioFocusOwner,
+          audioDuckingLvl,
+          tmuServiceMode,
+          signalBars);
+    gLastVoiceAssistState = mVoice.VoiceAssistState;
+    gLastWakeWordState = mVoice.WakeWordState;
+    gLastTtsState = mTts.TtsState;
+    gLastTtsPriority = mTts.TtsPriority;
+    gLastTtsQueueDepth = mTts.TtsQueueDepth;
+  }
+}
+
+on start
+{
+  gAudioFocusOwner = 0;
+  gAudioDuckingLvl = 0;
+  gTmuServiceMode = 0;
+  gSignalBars = 0;
+  gClusterNotifType = 0;
+  gClusterNotifArg = 0;
+  gAudioFocusRxMs = 0;
+  gTmuServiceRxMs = 0;
+  gClusterNotifRxMs = 0;
+  gLastAudioFocusInputStale = 0;
+  gLastTmuInputStale = 0;
+  gLastNotifInputStale = 0;
+  gLastVoiceAssistState = -1;
+  gLastWakeWordState = -1;
+  gLastTtsState = -1;
+  gLastTtsPriority = -1;
+  gLastTtsQueueDepth = -1;
+  setTimer(tVoiceCycle, 50);
+  write("[VCS] start");
+}
+
+on timer tVoiceCycle
+{
+  publishVoiceAssistState();
+  setTimer(tVoiceCycle, 50);
+}
+
+on message frmAudioFocusMsg
+{
+  gAudioFocusOwner = clampRange((int)this.AudioFocusOwner, 0, 7);
+  gAudioDuckingLvl = clampRange((int)this.AudioDuckingLvl, 0, 7);
+  gAudioFocusRxMs = getSimulationTimeMs();
+}
+
+on message frmTmuServiceStateMsg
+{
+  gTmuServiceMode = clampRange((int)this.TmuServiceMode, 0, 3);
+  gSignalBars = clampRange((int)this.SignalBars, 0, 15);
+  gTmuServiceRxMs = getSimulationTimeMs();
+}
+
+on message frmClusterNotifMsg
+{
+  gClusterNotifType = clampRange((int)this.ClusterNotifType, 0, 255);
+  gClusterNotifArg = clampRange((int)this.ClusterNotifArg, 0, 255);
+  gClusterNotifRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tVoiceCycle);
+}
+

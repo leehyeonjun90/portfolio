@@ -1,0 +1,156 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tEwpCycle;
+  int gThermalMode;
+  int gFanDuty;
+  int gCoolantTarget;
+  int gCoolantTemp;
+  dword gThermalMgmtRxMs;
+  dword gEngineTempRxMs;
+  int gLastThermalMgmtInputStale;
+  int gLastEngineTempInputStale;
+  int gLastState;
+  int gLastDuty;
+  int gLastFlow;
+}
+
+void traceEwpInputHealth(int thermalMgmtInputStale, int engineTempInputStale)
+{
+  if (thermalMgmtInputStale != gLastThermalMgmtInputStale)
+  {
+    if (thermalMgmtInputStale == 1)
+    {
+      write("[EWP] thermal-mgmt input stale");
+    }
+    else
+    {
+      write("[EWP] thermal-mgmt input restored");
+    }
+    gLastThermalMgmtInputStale = thermalMgmtInputStale;
+  }
+
+  if (engineTempInputStale != gLastEngineTempInputStale)
+  {
+    if (engineTempInputStale == 1)
+    {
+      write("[EWP] engine-temp input stale");
+    }
+    else
+    {
+      write("[EWP] engine-temp input restored");
+    }
+    gLastEngineTempInputStale = engineTempInputStale;
+  }
+}
+
+on start
+{
+  gThermalMode = 0;
+  gFanDuty = 0;
+  gCoolantTarget = 90;
+  gCoolantTemp = 20;
+  gThermalMgmtRxMs = 0;
+  gEngineTempRxMs = 0;
+  gLastThermalMgmtInputStale = 0;
+  gLastEngineTempInputStale = 0;
+  gLastState = -1;
+  gLastDuty = -1;
+  gLastFlow = -1;
+  setTimer(tEwpCycle, 100);
+  write("[EWP] start");
+}
+
+on message frmThermalMgmtStateMsg
+{
+  gThermalMode = clampRange((int)this.ThermalMode, 0, 7);
+  gFanDuty = clampRange((int)this.FanDuty, 0, 31);
+  gCoolantTarget = clampRange((int)this.CoolantTarget, 0, 255);
+  gThermalMgmtRxMs = getSimulationTimeMs();
+}
+
+on message frmEngineSpeedTempMsg
+{
+  gCoolantTemp = clampRange((int)this.CoolantTemp, 0, 255);
+  gEngineTempRxMs = getSimulationTimeMs();
+}
+
+on timer tEwpCycle
+{
+  message frmEwpStateMsg mEwp;
+  int thermalMgmtInputStale;
+  int engineTempInputStale;
+  int thermalMode;
+  int fanDuty;
+  int coolantTarget;
+  int coolantTemp;
+  int ewpState;
+  int pumpDuty;
+  int coolantFlow;
+  int thermalGap;
+
+  thermalMgmtInputStale = (ethIsRecentTick(gThermalMgmtRxMs, 300) == 1) ? 0 : 1;
+  engineTempInputStale = (ethIsRecentTick(gEngineTempRxMs, 300) == 1) ? 0 : 1;
+  traceEwpInputHealth(thermalMgmtInputStale, engineTempInputStale);
+
+  thermalMode = gThermalMode;
+  fanDuty = gFanDuty;
+  coolantTarget = gCoolantTarget;
+  coolantTemp = gCoolantTemp;
+  if (thermalMgmtInputStale == 1)
+  {
+    thermalMode = 0;
+    fanDuty = 0;
+    coolantTarget = 90;
+  }
+  if (engineTempInputStale == 1)
+  {
+    coolantTemp = 20;
+  }
+
+  thermalGap = coolantTemp - coolantTarget;
+
+  if (thermalMode > 0 || coolantTemp > 70)
+  {
+    ewpState = (thermalGap > 5) ? 2 : 1;
+    pumpDuty = clampRange((fanDuty * 3) + ((thermalGap > 0) ? thermalGap : 0), 0, 100);
+  }
+  else
+  {
+    ewpState = 0;
+    pumpDuty = 0;
+  }
+
+  coolantFlow = (ewpState == 0) ? 0 : clampRange((pumpDuty * 2) + (thermalMode * 10), 0, 255);
+
+  mEwp.EwpState = clampRange(ewpState, 0, 7);
+  mEwp.PumpDuty = pumpDuty;
+  mEwp.CoolantFlow = coolantFlow;
+  output(mEwp);
+
+  if (mEwp.EwpState != gLastState ||
+      mEwp.PumpDuty != gLastDuty ||
+      mEwp.CoolantFlow != gLastFlow)
+  {
+    write("[EWP] state=%d duty=%d flow=%d coolant=%d target=%d",
+          mEwp.EwpState,
+          mEwp.PumpDuty,
+          mEwp.CoolantFlow,
+          coolantTemp,
+          coolantTarget);
+    gLastState = mEwp.EwpState;
+    gLastDuty = mEwp.PumpDuty;
+    gLastFlow = mEwp.CoolantFlow;
+  }
+
+  setTimer(tEwpCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tEwpCycle);
+}

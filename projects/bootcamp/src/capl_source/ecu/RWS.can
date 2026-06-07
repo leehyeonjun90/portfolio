@@ -1,0 +1,136 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tRwsCycle;
+  int gVehicleSpeed;
+  int gSteeringTorque;
+  dword gVehicleStateRxMs;
+  dword gSteeringTorqueRxMs;
+  int gLastVehicleInputStale;
+  int gLastSteeringInputStale;
+  int gLastMode;
+  int gLastState;
+  int gLastAngle;
+}
+
+void traceRwsInputHealth(int vehicleInputStale, int steeringInputStale)
+{
+  if (vehicleInputStale != gLastVehicleInputStale)
+  {
+    if (vehicleInputStale == 1)
+    {
+      write("[RWS] vehicle-state input stale");
+    }
+    else
+    {
+      write("[RWS] vehicle-state input restored");
+    }
+    gLastVehicleInputStale = vehicleInputStale;
+  }
+
+  if (steeringInputStale != gLastSteeringInputStale)
+  {
+    if (steeringInputStale == 1)
+    {
+      write("[RWS] steering-torque input stale");
+    }
+    else
+    {
+      write("[RWS] steering-torque input restored");
+    }
+    gLastSteeringInputStale = steeringInputStale;
+  }
+}
+
+on start
+{
+  gVehicleSpeed = 0;
+  gSteeringTorque = 0;
+  gVehicleStateRxMs = 0;
+  gSteeringTorqueRxMs = 0;
+  gLastVehicleInputStale = 0;
+  gLastSteeringInputStale = 0;
+  gLastMode = -1;
+  gLastState = -1;
+  gLastAngle = -1;
+  setTimer(tRwsCycle, 100);
+  write("[RWS] start");
+}
+
+on message frmVehicleStateCanMsg
+{
+  gVehicleSpeed = clampRange((int)this.gVehicleSpeed, 0, 255);
+  gVehicleStateRxMs = getSimulationTimeMs();
+}
+
+on message frmSteeringTorqueMsg
+{
+  gSteeringTorque = clampRange((int)this.SteeringTorque, 0, 4095);
+  gSteeringTorqueRxMs = getSimulationTimeMs();
+}
+
+on timer tRwsCycle
+{
+  message frmRwsStateMsg mRws;
+  int vehicleInputStale;
+  int steeringInputStale;
+  int vehicleSpeed;
+  int steeringTorque;
+  int rwsMode;
+  int rwsState;
+  int rearSteerAngle;
+
+  vehicleInputStale = (ethIsRecentTick(gVehicleStateRxMs, 300) == 1) ? 0 : 1;
+  steeringInputStale = (ethIsRecentTick(gSteeringTorqueRxMs, 300) == 1) ? 0 : 1;
+  traceRwsInputHealth(vehicleInputStale, steeringInputStale);
+
+  vehicleSpeed = gVehicleSpeed;
+  steeringTorque = gSteeringTorque;
+  if (vehicleInputStale == 1)
+  {
+    // Default to the high-speed mode to minimize rear steering on lost speed input.
+    vehicleSpeed = 255;
+  }
+  if (steeringInputStale == 1)
+  {
+    steeringTorque = 0;
+  }
+
+  rwsMode = (vehicleSpeed < 60) ? 1 : 2;
+  rwsState = (steeringTorque > 5) ? 1 : 0;
+  rearSteerAngle = clampRange(steeringTorque / 4, 0, 255);
+  if (rwsMode == 2)
+  {
+    rearSteerAngle = clampRange(rearSteerAngle / 2, 0, 255);
+  }
+
+  mRws.RwsMode = clampRange(rwsMode, 0, 7);
+  mRws.RwsState = clampRange(rwsState, 0, 3);
+  mRws.RearSteerAngle = clampRange(rearSteerAngle, 0, 255);
+  output(mRws);
+
+  if (mRws.RwsMode != gLastMode ||
+      mRws.RwsState != gLastState ||
+      mRws.RearSteerAngle != gLastAngle)
+  {
+    write("[RWS] mode=%d state=%d angle=%d speed=%d",
+          mRws.RwsMode,
+          mRws.RwsState,
+          mRws.RearSteerAngle,
+          vehicleSpeed);
+    gLastMode = mRws.RwsMode;
+    gLastState = mRws.RwsState;
+    gLastAngle = mRws.RearSteerAngle;
+  }
+
+  setTimer(tRwsCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tRwsCycle);
+}

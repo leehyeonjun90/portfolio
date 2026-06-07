@@ -1,0 +1,987 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tBodyCycle;
+  msTimer tBodyBase100;
+  int gLastAmbientMode;
+  int gLastAmbientColor;
+  int gLastAmbientPattern;
+  int gBodyAliveCnt;
+  int gBackboneAlertLevel;
+  int gBackboneAlertType;
+  int gBackboneTimeoutClear;
+  dword gBackboneAlertTsMs;
+  int gDoorFlOpenState;
+  int gDoorFrOpenState;
+  int gDoorRlOpenState;
+  int gDoorRrOpenState;
+  int gDoorFlLockState;
+  int gDoorFrLockState;
+  int gDoorRlLockState;
+  int gDoorRrLockState;
+  int gTailgateOpenState;
+  int gSeatDrvPos;
+  int gSeatPassPos;
+  dword gDoorFlRxMs;
+  dword gDoorFrRxMs;
+  dword gDoorRlRxMs;
+  dword gDoorRrRxMs;
+  dword gTailgateRxMs;
+  dword gSeatDrvRxMs;
+  dword gSeatPassRxMs;
+  int gLastDoorDetailInputStale;
+  int gLastSeatDetailInputStale;
+  int gPaakState;
+  int gPaakAuthLevel;
+  int gPaakProximityState;
+  int gTmuRemoteClimateReq;
+  int gTmuServiceMode;
+  int gHvacCabinSetTemp;
+  int gHvacBlowerLevel;
+  int gHvacAcOn;
+  int gDriveState;
+  int gTurnLampInputState;
+  dword gPaakRxMs;
+  dword gTmuServiceRxMs;
+  dword gHvacStateRxMs;
+  dword gVehicleRxMs;
+  dword gTurnLampInputRxMs;
+  int gLastPaakInputStale;
+  int gLastTmuInputStale;
+  int gLastHvacInputStale;
+  int gLastVehicleCtxInputStale;
+  int gLastDoorControlCmd;
+  int gLastChildLockCmd;
+  int gLastSeatHeatCmd;
+  int gLastSeatVentCmd;
+  int gLastComfortProfile;
+  int gLastComfortStatus;
+  int gLastComfortError;
+  int gBlinkFlashPhase;
+}
+
+int useBackboneAlertState()
+{
+  dword nowMs;
+
+  if (gBackboneAlertTsMs == 0)
+  {
+    return 0;
+  }
+
+  nowMs = getSimulationTimeMs();
+  if ((nowMs - gBackboneAlertTsMs) > 500)
+  {
+    return 0;
+  }
+
+  return 1;
+}
+
+int useEffectiveAlertState()
+{
+  int effectiveAlertLevel;
+  int effectiveAlertType;
+  int selectedAlertGateReason;
+  int timeoutClear;
+
+  effectiveAlertLevel = clampRange((int)@CoreState::selectedAlertEffectiveLevel, 0, 7);
+  effectiveAlertType = clampRange((int)@CoreState::selectedAlertEffectiveType, 0, 15);
+  selectedAlertGateReason = clampRange((int)@CoreState::selectedAlertGateReason, 0, 7);
+  timeoutClear = (((int)@Core::timeoutClear) == 1) ? 1 : 0;
+
+  if (effectiveAlertLevel > 0 ||
+      effectiveAlertType > 0 ||
+      selectedAlertGateReason > 0 ||
+      timeoutClear == 1)
+  {
+    return 1;
+  }
+
+  return 0;
+}
+
+int useDecisionAlertState()
+{
+  int decisionAlertLevel;
+  int decisionAlertType;
+  int selectedAlertGateReason;
+  int timeoutClear;
+
+  decisionAlertLevel = clampRange((int)@CoreState::selectedAlertDecisionLevel, 0, 7);
+  decisionAlertType = clampRange((int)@CoreState::selectedAlertDecisionType, 0, 15);
+  selectedAlertGateReason = clampRange((int)@CoreState::selectedAlertGateReason, 0, 7);
+  timeoutClear = (((int)@Core::timeoutClear) == 1) ? 1 : 0;
+
+  if ((decisionAlertLevel > 0 || decisionAlertType > 0) &&
+      selectedAlertGateReason == 0 &&
+      timeoutClear == 0)
+  {
+    return 1;
+  }
+
+  return 0;
+}
+
+int deriveAmbientMode(int alertLevel, int alertType, int timeoutClear)
+{
+  if (timeoutClear == 1 || alertLevel <= 0)
+  {
+    return 0;
+  }
+  if (alertLevel >= 6)
+  {
+    return (alertType == 2) ? 7 : 6;
+  }
+  if (alertType == 3)
+  {
+    return 2;
+  }
+  if (alertType == 4)
+  {
+    return 3;
+  }
+  if (alertType == 5)
+  {
+    return 4;
+  }
+  if (alertType == 6)
+  {
+    return 5;
+  }
+  return 1;
+}
+
+int deriveAmbientColorFromMode(int ambientMode)
+{
+  ambientMode = clampRange(ambientMode, 0, 7);
+  if (ambientMode == 0) { return 0; }
+  if (ambientMode == 2) { return 3; }
+  if (ambientMode == 3) { return 4; }
+  if (ambientMode == 4 || ambientMode == 5) { return 5; }
+  if (ambientMode == 6) { return 6; }
+  if (ambientMode == 7) { return 7; }
+  return 1;
+}
+
+int deriveAmbientPatternFromMode(int ambientMode)
+{
+  ambientMode = clampRange(ambientMode, 0, 7);
+  if (ambientMode == 0) { return 0; }
+  if (ambientMode == 2) { return 5; }
+  if (ambientMode == 3) { return 4; }
+  if (ambientMode == 4) { return 2; }
+  if (ambientMode == 5) { return 3; }
+  if (ambientMode == 6) { return 6; }
+  if (ambientMode == 7) { return 7; }
+  return 1;
+}
+
+void updateBackboneAlertState(int alertLevel, int alertType, int timeoutClear)
+{
+  gBackboneAlertLevel = clampRange(alertLevel, 0, 7);
+  gBackboneAlertType = clampRange(alertType, 0, 15);
+  gBackboneTimeoutClear = (timeoutClear == 1) ? 1 : 0;
+  gBackboneAlertTsMs = getSimulationTimeMs();
+}
+
+void traceBcmLeafHealth(int doorDetailInputStale, int seatDetailInputStale)
+{
+  if (doorDetailInputStale != gLastDoorDetailInputStale)
+  {
+    if (doorDetailInputStale == 1)
+    {
+      write("[BCM] door detail input stale");
+    }
+    else
+    {
+      write("[BCM] door detail input restored");
+    }
+    gLastDoorDetailInputStale = doorDetailInputStale;
+  }
+
+  if (seatDetailInputStale != gLastSeatDetailInputStale)
+  {
+    if (seatDetailInputStale == 1)
+    {
+      write("[BCM] seat detail input stale");
+    }
+    else
+    {
+      write("[BCM] seat detail input restored");
+    }
+    gLastSeatDetailInputStale = seatDetailInputStale;
+  }
+}
+
+void traceBcmCommandHealth(int paakInputStale,
+                           int tmuInputStale,
+                           int hvacInputStale,
+                           int vehicleCtxInputStale)
+{
+  if (paakInputStale != gLastPaakInputStale)
+  {
+    if (paakInputStale == 1)
+    {
+      write("[BCM] paak input stale");
+    }
+    else
+    {
+      write("[BCM] paak input restored");
+    }
+    gLastPaakInputStale = paakInputStale;
+  }
+
+  if (tmuInputStale != gLastTmuInputStale)
+  {
+    if (tmuInputStale == 1)
+    {
+      write("[BCM] tmu input stale");
+    }
+    else
+    {
+      write("[BCM] tmu input restored");
+    }
+    gLastTmuInputStale = tmuInputStale;
+  }
+
+  if (hvacInputStale != gLastHvacInputStale)
+  {
+    if (hvacInputStale == 1)
+    {
+      write("[BCM] hvac input stale");
+    }
+    else
+    {
+      write("[BCM] hvac input restored");
+    }
+    gLastHvacInputStale = hvacInputStale;
+  }
+
+  if (vehicleCtxInputStale != gLastVehicleCtxInputStale)
+  {
+    if (vehicleCtxInputStale == 1)
+    {
+      write("[BCM] vehicle-context input stale");
+    }
+    else
+    {
+      write("[BCM] vehicle-context input restored");
+    }
+    gLastVehicleCtxInputStale = vehicleCtxInputStale;
+  }
+}
+
+
+
+on start
+{
+  gLastAmbientMode = -1;
+  gLastAmbientColor = -1;
+  gLastAmbientPattern = -1;
+  gBodyAliveCnt = 0;
+  gBackboneAlertLevel = 0;
+  gBackboneAlertType = 0;
+  gBackboneTimeoutClear = 0;
+  gBackboneAlertTsMs = 0;
+  gDoorFlOpenState = 0;
+  gDoorFrOpenState = 0;
+  gDoorRlOpenState = 0;
+  gDoorRrOpenState = 0;
+  gDoorFlLockState = 1;
+  gDoorFrLockState = 1;
+  gDoorRlLockState = 1;
+  gDoorRrLockState = 1;
+  gTailgateOpenState = 0;
+  gSeatDrvPos = 120;
+  gSeatPassPos = 0;
+  gDoorFlRxMs = 0;
+  gDoorFrRxMs = 0;
+  gDoorRlRxMs = 0;
+  gDoorRrRxMs = 0;
+  gTailgateRxMs = 0;
+  gSeatDrvRxMs = 0;
+  gSeatPassRxMs = 0;
+  gLastDoorDetailInputStale = 0;
+  gLastSeatDetailInputStale = 0;
+  gPaakState = 0;
+  gPaakAuthLevel = 0;
+  gPaakProximityState = 0;
+  gTmuRemoteClimateReq = 0;
+  gTmuServiceMode = 0;
+  gHvacCabinSetTemp = 22;
+  gHvacBlowerLevel = 0;
+  gHvacAcOn = 0;
+  gDriveState = 0;
+  gTurnLampInputState = 0;
+  gPaakRxMs = 0;
+  gTmuServiceRxMs = 0;
+  gHvacStateRxMs = 0;
+  gVehicleRxMs = 0;
+  gTurnLampInputRxMs = 0;
+  gLastPaakInputStale = 0;
+  gLastTmuInputStale = 0;
+  gLastHvacInputStale = 0;
+  gLastVehicleCtxInputStale = 0;
+  gLastDoorControlCmd = -1;
+  gLastChildLockCmd = -1;
+  gLastSeatHeatCmd = -1;
+  gLastSeatVentCmd = -1;
+  gLastComfortProfile = -1;
+  gLastComfortStatus = -1;
+  gLastComfortError = -1;
+  gBlinkFlashPhase = 0;
+  @Body::blinkLeft = 0;
+  @Body::blinkRight = 0;
+  @CoreState::bodyHealthTick = 0;
+  setTimer(tBodyCycle, 10);
+  setTimer(tBodyBase100, 100);
+  write("[BCM] start");
+}
+
+on timer tBodyCycle
+{
+  int alertLevel;
+  int alertType;
+  int timeoutClear;
+  int ambientMode;
+  int ambientColor;
+  int ambientPattern;
+  int useBackbone;
+  int useDecision;
+  int useEffective;
+  int manualMode;
+  message frmAmbientControlMsg mAmbient;
+
+  useEffective = useEffectiveAlertState();
+  useDecision = useDecisionAlertState();
+  useBackbone = useBackboneAlertState();
+  if (useEffective == 1)
+  {
+    alertLevel = clampRange((int)@CoreState::selectedAlertEffectiveLevel, 0, 7);
+    alertType = clampRange((int)@CoreState::selectedAlertEffectiveType, 0, 15);
+    timeoutClear = (((int)@Core::timeoutClear) == 1) ? 1 : 0;
+    updateBackboneAlertState(alertLevel, alertType, timeoutClear);
+  }
+  else if (useDecision == 1)
+  {
+    alertLevel = clampRange((int)@CoreState::selectedAlertDecisionLevel, 0, 7);
+    alertType = clampRange((int)@CoreState::selectedAlertDecisionType, 0, 15);
+    timeoutClear = 0;
+    updateBackboneAlertState(alertLevel, alertType, timeoutClear);
+  }
+  else if (useBackbone == 1)
+  {
+    alertLevel = gBackboneAlertLevel;
+    alertType = gBackboneAlertType;
+    timeoutClear = gBackboneTimeoutClear;
+  }
+  else
+  {
+    alertLevel = 0;
+    alertType = 0;
+    timeoutClear = 0;
+  }
+  if (alertLevel < 0 || alertLevel > 7)
+  {
+    alertLevel = 0;
+  }
+  if (alertType < 0 || alertType > 15)
+  {
+    alertType = 0;
+  }
+  timeoutClear = (timeoutClear == 1) ? 1 : 0;
+  manualMode = (((int)@Test::scenarioActiveId) == 0) ? 1 : 0;
+  if (manualMode == 1)
+  {
+    ambientMode = clampRange((int)@Cmd::ambientModeCmd, 0, 7);
+    ambientColor = deriveAmbientColorFromMode(ambientMode);
+    ambientPattern = deriveAmbientPatternFromMode(ambientMode);
+  }
+  else
+  {
+    ambientMode = deriveAmbientMode(alertLevel, alertType, timeoutClear);
+    if (ambientMode == 0)
+    {
+      ambientColor = 0;
+      ambientPattern = 0;
+    }
+    else
+    {
+      ambientColor = 0;
+      ambientPattern = 0;
+      if (alertLevel >= 6)
+      {
+        /* Req_035: emergency color/pattern distinct from zone policies
+           Legacy Req_036 merged into Req_035
+           6=RED/BLUE(police)  7=RED/WHITE(ambulance) */
+        ambientColor   = (alertType == 2) ? 7 : 6;
+        ambientPattern = (alertType == 2) ? 7 : 6;
+      }
+      else if (alertType == 3)
+      {
+        ambientColor   = 3; /* red   - Req_037 school zone fixed color */
+        ambientPattern = 5; /* fast flash - Req_037 school zone fixed pattern */
+      }
+      else if (alertType == 4)
+      {
+        ambientColor   = 4; /* orange - Req_037 highway fixed color (Legacy Req_038) */
+        ambientPattern = 4; /* pulse  - Req_037 highway fixed pattern (Legacy Req_038) */
+      }
+      else if (alertType == 5)
+      {
+        ambientColor   = 5; /* cyan      - Req_037 guide left (Legacy Req_039) */
+        ambientPattern = 2; /* flow-left - Req_037 guide left fixed pattern (Legacy Req_039) */
+      }
+      else if (alertType == 6)
+      {
+        ambientColor   = 5; /* cyan       - Req_037 guide right (Legacy Req_039) */
+        ambientPattern = 3; /* flow-right - Req_037 guide right fixed pattern (Legacy Req_039) */
+      }
+      else if (alertLevel > 0)
+      {
+        ambientColor   = 1; /* green - general fallback */
+        ambientPattern = 1; /* solid */
+      }
+    }
+  }
+
+  if (ambientMode != gLastAmbientMode ||
+      ambientColor != gLastAmbientColor ||
+      ambientPattern != gLastAmbientPattern)
+  {
+    @Body::ambientMode = ambientMode;
+    @Body::ambientColor = ambientColor;
+    @Body::ambientPattern = ambientPattern;
+
+    mAmbient.AmbientMode = ambientMode;
+    mAmbient.AmbientColor = ambientColor;
+    mAmbient.AmbientPattern = ambientPattern;
+    output(mAmbient);
+
+    gLastAmbientMode = ambientMode;
+    gLastAmbientColor = ambientColor;
+    gLastAmbientPattern = ambientPattern;
+  }
+
+  setTimer(tBodyCycle, 10);
+}
+
+on timer tBodyBase100
+{
+  message frmHazardControlMsg mHazard;
+  message frmWindowControlMsg mWindow;
+  message frmDoorStateMsg mDoorState;
+  message frmLampControlMsg mLamp;
+  message frmSeatBeltStateMsg mSeatBelt;
+  message frmCabinAirStateMsg mCabinAir;
+  message frmBodyHealthMsg mHealth;
+  message frmSeatStateMsg mSeatState;
+  message frmSeatControlMsg mSeatCtrl;
+  message frmDoorControlMsg mDoorCtrl;
+  message frmSunroofControlMsg mSunroofCtrl;
+  message frmBodyGatewayStateMsg mBodyGwState;
+  message frmBodyComfortStateMsg mComfort;
+  message frmInteriorLightMsg mLight;
+  message frmRainLightAutoMsg mRain;
+  int hazardActive;
+  int ambientMode;
+  int routingPolicy;
+  int warningPathStatus;
+  int boundaryAlive;
+  int bodyGwRouteState;
+  int bodyGwHealth;
+  int doorDetailInputStale;
+  int seatDetailInputStale;
+  int doorStateMask;
+  int doorLockState;
+  int doorOpenWarn;
+  int childLockState;
+  int blinkOn;
+  int driverSeatPos;
+  int passengerSeatPos;
+  int paakInputStale;
+  int tmuInputStale;
+  int hvacInputStale;
+  int vehicleCtxInputStale;
+  int paakState;
+  int paakAuthLevel;
+  int paakProximityState;
+  int tmuRemoteClimateReq;
+  int tmuServiceMode;
+  int hvacCabinSetTemp;
+  int hvacBlowerLevel;
+  int hvacAcOn;
+  int driveState;
+  int manualMode;
+  int turnLampInputStale;
+  int turnLampState;
+  int doorControlCmd;
+  int seatHeatLevel;
+  int seatVentLevel;
+  int sunroofPositionCmd;
+  int sunroofTiltCmd;
+  int sunshadeCmd;
+  int comfortProfile;
+  int comfortStatus;
+  int comfortError;
+  int driverBeltOff;
+  int passengerBeltOff;
+  if (useEffectiveAlertState() == 1)
+  {
+    hazardActive = (clampRange((int)@CoreState::selectedAlertEffectiveLevel, 0, 7) >= 6) ? 1 : 0;
+  }
+  else if (useBackboneAlertState() == 1)
+  {
+    hazardActive = (gBackboneAlertLevel >= 6) ? 1 : 0;
+  }
+  else
+  {
+    hazardActive = 0;
+  }
+  turnLampInputStale = (ethIsRecentTick(gTurnLampInputRxMs, 300) == 1) ? 0 : 1;
+  manualMode = (((int)@Test::scenarioActiveId) == 0) ? 1 : 0;
+  driveState = gDriveState;
+  ambientMode = (manualMode == 1)
+                ? clampRange((int)@Cmd::ambientModeCmd, 0, 7)
+                : clampRange((int)@Body::ambientMode, 0, 7);
+  routingPolicy = clampRange((int)@CoreState::routingPolicy, 0, 2);
+  warningPathStatus = clampRange((int)@CoreState::warningPathStatus, 0, 2);
+  boundaryAlive = clampRange((int)@CoreState::domainBoundaryStatus, 0, 1);
+  bodyGwRouteState = routingPolicy;
+  bodyGwHealth = warningPathStatus;
+  if (boundaryAlive == 0 && bodyGwHealth == 0)
+  {
+    bodyGwHealth = 1;
+  }
+  mHazard.HazardSwitch = hazardActive;
+  mHazard.HazardState = hazardActive;
+  output(mHazard);
+
+  mWindow.WindowCommand = 0;
+  mWindow.WindowState = 0;
+  output(mWindow);
+
+  mLight.CabinLightMode = ambientMode & 0x7;
+  mLight.DomeLightLevel = (ambientMode > 0) ? 20 : 4;
+  output(mLight);
+
+  mRain.RainSenseLevel = 0;
+  mRain.AutoLightState = 0;
+  output(mRain);
+
+  doorDetailInputStale = 0;
+  if (ethIsRecentTick(gDoorFlRxMs, 300) == 0 ||
+      ethIsRecentTick(gDoorFrRxMs, 300) == 0 ||
+      ethIsRecentTick(gDoorRlRxMs, 300) == 0 ||
+      ethIsRecentTick(gDoorRrRxMs, 300) == 0 ||
+      ethIsRecentTick(gTailgateRxMs, 300) == 0)
+  {
+    doorDetailInputStale = 1;
+  }
+
+  seatDetailInputStale = 0;
+  if (ethIsRecentTick(gSeatDrvRxMs, 300) == 0 ||
+      ethIsRecentTick(gSeatPassRxMs, 300) == 0)
+  {
+    seatDetailInputStale = 1;
+  }
+  traceBcmLeafHealth(doorDetailInputStale, seatDetailInputStale);
+
+  doorStateMask = 0;
+  doorLockState = 1;
+  childLockState = 0;
+  doorOpenWarn = 0;
+  if (doorDetailInputStale == 0)
+  {
+    if (gDoorFlOpenState > 0) { doorStateMask = doorStateMask | 0x1; }
+    if (gDoorFrOpenState > 0) { doorStateMask = doorStateMask | 0x2; }
+    if (gDoorRlOpenState > 0) { doorStateMask = doorStateMask | 0x4; }
+    if (gDoorRrOpenState > 0) { doorStateMask = doorStateMask | 0x8; }
+    if (gDoorFlLockState == 0 ||
+        gDoorFrLockState == 0 ||
+        gDoorRlLockState == 0 ||
+        gDoorRrLockState == 0)
+    {
+      doorLockState = 0;
+    }
+    if (doorStateMask != 0 || gTailgateOpenState > 0)
+    {
+      doorOpenWarn = 1;
+    }
+  }
+
+  mDoorState.DoorStateMask = doorStateMask;
+  mDoorState.DoorLockState = doorLockState;
+  mDoorState.ChildLockState = childLockState;
+  mDoorState.DoorOpenWarn = doorOpenWarn;
+  output(mDoorState);
+
+  mLamp.TailLampState = 1;
+  if (hazardActive == 1)
+  {
+    turnLampState = 3;
+  }
+  else if (manualMode == 1)
+  {
+    turnLampState = clampRange((int)@Cmd::turnSignalCmd, 0, 3);
+  }
+  else if (turnLampInputStale == 0)
+  {
+    turnLampState = clampRange(gTurnLampInputState, 0, 3);
+  }
+  else
+  {
+    turnLampState = 0;
+  }
+  mLamp.HeadLampState = ((hazardActive == 1) ||
+                         (driveState > 0 && turnLampState > 0)) ? 2 : 1;
+  mLamp.TurnLampState = clampRange(turnLampState, 0, 3);
+  mLamp.HazardLampReq = hazardActive;
+  output(mLamp);
+
+  gBlinkFlashPhase = gBlinkFlashPhase + 1;
+  if (gBlinkFlashPhase >= 10)
+  {
+    gBlinkFlashPhase = 0;
+  }
+  blinkOn = (gBlinkFlashPhase < 5) ? 1 : 0;
+  if (mLamp.TurnLampState == 1)
+  {
+    @Body::blinkLeft = blinkOn;
+    @Body::blinkRight = 0;
+  }
+  else if (mLamp.TurnLampState == 2)
+  {
+    @Body::blinkLeft = 0;
+    @Body::blinkRight = blinkOn;
+  }
+  else if (mLamp.TurnLampState == 3)
+  {
+    @Body::blinkLeft = blinkOn;
+    @Body::blinkRight = blinkOn;
+  }
+  else
+  {
+    @Body::blinkLeft = 0;
+    @Body::blinkRight = 0;
+  }
+
+  driverBeltOff = (((int)@Test::driverBeltOff) > 0) ? 1 : 0;
+  passengerBeltOff = (((int)@Test::passengerBeltOff) > 0) ? 1 : 0;
+  mSeatBelt.DriverSeatBelt = (driverBeltOff == 1) ? 0 : 1;
+  mSeatBelt.PassengerSeatBelt = (passengerBeltOff == 1) ? 0 : 1;
+  mSeatBelt.RearSeatBelt = 2;
+  mSeatBelt.SeatBeltWarnLvl = 0;
+  if (mSeatBelt.DriverSeatBelt == 0 || mSeatBelt.PassengerSeatBelt == 0)
+  {
+    mSeatBelt.SeatBeltWarnLvl = (gDriveState > 0) ? 3 : 2;
+  }
+  output(mSeatBelt);
+
+  @CoreState::turnLampState = mLamp.TurnLampState;
+  @CoreState::driverSeatBelt = mSeatBelt.DriverSeatBelt;
+  @CoreState::passengerSeatBelt = mSeatBelt.PassengerSeatBelt;
+  @CoreState::seatBeltWarnLvl = mSeatBelt.SeatBeltWarnLvl;
+
+  mCabinAir.CabinTemp = 24;
+  mCabinAir.AirQualityIndex = 90;
+  output(mCabinAir);
+
+  mHealth.BodyAliveCnt = gBodyAliveCnt & 0xFF;
+  mHealth.BodyDiagState = 1;
+  mHealth.BodyFailCode = 0;
+  @Diag::BodyDiagState = mHealth.BodyDiagState;
+  @Diag::BodyFailCode = mHealth.BodyFailCode;
+  output(mHealth);
+  @CoreState::bodyHealthTick = mHealth.BodyAliveCnt;
+
+  driverSeatPos = 0;
+  passengerSeatPos = 0;
+  if (seatDetailInputStale == 0)
+  {
+    driverSeatPos = gSeatDrvPos;
+    passengerSeatPos = gSeatPassPos;
+  }
+  mSeatState.DriverSeatPos = clampRange(driverSeatPos, 0, 255);
+  mSeatState.PassengerSeatPos = clampRange(passengerSeatPos, 0, 255);
+  output(mSeatState);
+
+  paakInputStale = (ethIsRecentTick(gPaakRxMs, 300) == 1) ? 0 : 1;
+  tmuInputStale = (ethIsRecentTick(gTmuServiceRxMs, 300) == 1) ? 0 : 1;
+  hvacInputStale = (ethIsRecentTick(gHvacStateRxMs, 300) == 1) ? 0 : 1;
+  vehicleCtxInputStale = (ethIsRecentTick(gVehicleRxMs, 300) == 1) ? 0 : 1;
+  traceBcmCommandHealth(paakInputStale, tmuInputStale, hvacInputStale, vehicleCtxInputStale);
+
+  paakState = gPaakState;
+  paakAuthLevel = gPaakAuthLevel;
+  paakProximityState = gPaakProximityState;
+  tmuRemoteClimateReq = gTmuRemoteClimateReq;
+  tmuServiceMode = gTmuServiceMode;
+  hvacCabinSetTemp = gHvacCabinSetTemp;
+  hvacBlowerLevel = gHvacBlowerLevel;
+  hvacAcOn = gHvacAcOn;
+  if (paakInputStale == 1)
+  {
+    paakState = 0;
+    paakAuthLevel = 0;
+    paakProximityState = 0;
+  }
+  if (tmuInputStale == 1)
+  {
+    tmuRemoteClimateReq = 0;
+    tmuServiceMode = 0;
+  }
+  if (hvacInputStale == 1)
+  {
+    hvacCabinSetTemp = 22;
+    hvacBlowerLevel = 0;
+    hvacAcOn = 0;
+  }
+  if (vehicleCtxInputStale == 1)
+  {
+    driveState = 3;
+  }
+
+  doorControlCmd = 0;
+  if (manualMode == 0 &&
+      driveState == 0 &&
+      paakAuthLevel >= 1 &&
+      paakProximityState >= 2 &&
+      paakState >= 1)
+  {
+    doorControlCmd = 1;
+  }
+  childLockState = ((manualMode == 0) && (driveState > 0)) ? 1 : 0;
+
+  seatHeatLevel = 0;
+  seatVentLevel = 0;
+  sunroofPositionCmd = 0;
+  sunroofTiltCmd = 0;
+  sunshadeCmd = 0;
+  if (manualMode == 0 &&
+      tmuRemoteClimateReq == 1 &&
+      tmuServiceMode >= 1)
+  {
+    if (hvacAcOn == 1)
+    {
+      seatVentLevel = clampRange(hvacBlowerLevel - 1, 0, 7);
+    }
+    else if (hvacCabinSetTemp >= 24)
+    {
+      seatHeatLevel = clampRange(hvacCabinSetTemp - 21, 0, 7);
+    }
+
+    if (driveState == 0)
+    {
+      sunshadeCmd = 1;
+      if (hvacAcOn == 0 && hvacCabinSetTemp >= 26)
+      {
+        sunroofPositionCmd = 15;
+        sunroofTiltCmd = 1;
+      }
+    }
+  }
+
+  mSeatCtrl.DriverSeatCmd = 0;
+  mSeatCtrl.PassengerSeatCmd = 0;
+  mSeatCtrl.SeatHeatLevel = seatHeatLevel;
+  mSeatCtrl.SeatVentLevel = seatVentLevel;
+  output(mSeatCtrl);
+
+  mSunroofCtrl.SunroofPositionCmd = clampRange(sunroofPositionCmd, 0, 100);
+  mSunroofCtrl.SunroofTiltCmd = clampRange(sunroofTiltCmd, 0, 3);
+  mSunroofCtrl.SunshadeCmd = clampRange(sunshadeCmd, 0, 3);
+  output(mSunroofCtrl);
+
+  mDoorCtrl.DoorControlCmd = doorControlCmd;
+  mDoorCtrl.ChildLockCmd = childLockState;
+  output(mDoorCtrl);
+
+  if (mDoorCtrl.DoorControlCmd != gLastDoorControlCmd ||
+      mDoorCtrl.ChildLockCmd != gLastChildLockCmd ||
+      mSeatCtrl.SeatHeatLevel != gLastSeatHeatCmd ||
+      mSeatCtrl.SeatVentLevel != gLastSeatVentCmd)
+  {
+    write("[BCM] doorCmd=%d child=%d seatHeat=%d seatVent=%d paak=%d/%d/%d remote=%d hvac=%d/%d/%d drive=%d",
+          mDoorCtrl.DoorControlCmd,
+          mDoorCtrl.ChildLockCmd,
+          mSeatCtrl.SeatHeatLevel,
+          mSeatCtrl.SeatVentLevel,
+          paakState,
+          paakAuthLevel,
+          paakProximityState,
+          tmuRemoteClimateReq,
+          hvacCabinSetTemp,
+          hvacBlowerLevel,
+          hvacAcOn,
+          driveState);
+    gLastDoorControlCmd = mDoorCtrl.DoorControlCmd;
+    gLastChildLockCmd = mDoorCtrl.ChildLockCmd;
+    gLastSeatHeatCmd = mSeatCtrl.SeatHeatLevel;
+    gLastSeatVentCmd = mSeatCtrl.SeatVentLevel;
+  }
+
+  mBodyGwState.BodyGwRouteState = bodyGwRouteState;
+  mBodyGwState.BodyGwHealth = bodyGwHealth;
+  output(mBodyGwState);
+
+  comfortProfile = 1;
+  if (vehicleCtxInputStale == 1 || doorDetailInputStale == 1 || seatDetailInputStale == 1)
+  {
+    comfortProfile = 0;
+  }
+  else if (manualMode == 0 &&
+           (tmuRemoteClimateReq == 1 || seatHeatLevel > 0 || seatVentLevel > 0))
+  {
+    comfortProfile = 3;
+  }
+  else if (doorControlCmd > 0 || doorStateMask != 0 || doorLockState == 0 ||
+           (manualMode == 0 && (paakAuthLevel >= 1 || paakProximityState >= 2)))
+  {
+    comfortProfile = 2;
+  }
+  else if (driveState > 0 || ambientMode > 0)
+  {
+    comfortProfile = 4;
+  }
+
+  comfortStatus = (childLockState > 0) ? 1 : 0;
+
+  comfortError = 0;
+  if (doorDetailInputStale == 1 ||
+      seatDetailInputStale == 1 ||
+      paakInputStale == 1 ||
+      tmuInputStale == 1 ||
+      hvacInputStale == 1 ||
+      vehicleCtxInputStale == 1)
+  {
+    comfortError = 1;
+  }
+
+  mComfort.ComfortProfile = clampRange(comfortProfile, 0, 7);
+  mComfort.ComfortStatus = clampRange(comfortStatus, 0, 1);
+  mComfort.ComfortError = clampRange(comfortError, 0, 7);
+  output(mComfort);
+
+  if (mComfort.ComfortProfile != gLastComfortProfile ||
+      mComfort.ComfortStatus != gLastComfortStatus ||
+      mComfort.ComfortError != gLastComfortError)
+  {
+    write("[BCM] comfort profile=%d status=%d error=%d access=%d climate=%d/%d child=%d doorMask=%d lock=%d drive=%d",
+          mComfort.ComfortProfile,
+          mComfort.ComfortStatus,
+          mComfort.ComfortError,
+          doorControlCmd,
+          seatHeatLevel,
+          seatVentLevel,
+          childLockState,
+          doorStateMask,
+          doorLockState,
+          driveState);
+    gLastComfortProfile = mComfort.ComfortProfile;
+    gLastComfortStatus = mComfort.ComfortStatus;
+    gLastComfortError = mComfort.ComfortError;
+  }
+  gBodyAliveCnt = (gBodyAliveCnt + 1) & 0xFF;
+
+  setTimer(tBodyBase100, 100);
+}
+
+on message frmDoorFlStateMsg
+{
+  gDoorFlOpenState = clampRange((int)this.DoorFlOpenState, 0, 1);
+  gDoorFlLockState = clampRange((int)this.DoorFlLockState, 0, 3);
+  gDoorFlRxMs = getSimulationTimeMs();
+}
+
+on message frmDoorFrStateMsg
+{
+  gDoorFrOpenState = clampRange((int)this.DoorFrOpenState, 0, 1);
+  gDoorFrLockState = clampRange((int)this.DoorFrLockState, 0, 3);
+  gDoorFrRxMs = getSimulationTimeMs();
+}
+
+on message frmDoorRlStateMsg
+{
+  gDoorRlOpenState = clampRange((int)this.DoorRlOpenState, 0, 1);
+  gDoorRlLockState = clampRange((int)this.DoorRlLockState, 0, 3);
+  gDoorRlRxMs = getSimulationTimeMs();
+}
+
+on message frmDoorRrStateMsg
+{
+  gDoorRrOpenState = clampRange((int)this.DoorRrOpenState, 0, 1);
+  gDoorRrLockState = clampRange((int)this.DoorRrLockState, 0, 3);
+  gDoorRrRxMs = getSimulationTimeMs();
+}
+
+on message frmTailgateStateMsg
+{
+  gTailgateOpenState = clampRange((int)this.TailgateOpenState, 0, 1);
+  gTailgateRxMs = getSimulationTimeMs();
+}
+
+on message frmSeatDrvStateMsg
+{
+  gSeatDrvPos = clampRange((int)this.SeatDrvPos, 0, 255);
+  gSeatDrvRxMs = getSimulationTimeMs();
+}
+
+on message frmSeatPassStateMsg
+{
+  gSeatPassPos = clampRange((int)this.SeatPassPos, 0, 255);
+  gSeatPassRxMs = getSimulationTimeMs();
+}
+
+on message frmPhoneAsKeyStateMsg
+{
+  gPaakState = clampRange((int)this.PaakState, 0, 7);
+  gPaakAuthLevel = clampRange((int)this.AuthLevel, 0, 3);
+  gPaakProximityState = clampRange((int)this.ProximityState, 0, 3);
+  gPaakRxMs = getSimulationTimeMs();
+}
+
+on message frmTmuServiceStateMsg
+{
+  gTmuRemoteClimateReq = clampRange((int)this.RemoteClimateReq, 0, 1);
+  gTmuServiceMode = clampRange((int)this.TmuServiceMode, 0, 3);
+  gTmuServiceRxMs = getSimulationTimeMs();
+}
+
+on message frmHvacStateMsg
+{
+  gHvacCabinSetTemp = clampRange((int)this.CabinSetTemp, 0, 100);
+  gHvacBlowerLevel = clampRange((int)this.BlowerLevel, 0, 15);
+  gHvacAcOn = clampRange((int)this.AcCompressorOn, 0, 1);
+  gHvacStateRxMs = getSimulationTimeMs();
+}
+
+on message frmVehicleStateCanMsg
+{
+  gDriveState = clampRange((int)this.gDriveState, 0, 3);
+  gVehicleRxMs = getSimulationTimeMs();
+}
+
+on message frmAdasDomainStateMsg
+{
+  updateBackboneAlertState((int)this.SelectedAlertLevel,
+                           (int)this.SelectedAlertType,
+                           (int)this.TimeoutClear);
+}
+
+on message frmTurnLampInputMsg
+{
+  gTurnLampInputState = clampRange((int)this.TurnLampState, 0, 3);
+  gTurnLampInputRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tBodyCycle);
+  cancelTimer(tBodyBase100);
+}

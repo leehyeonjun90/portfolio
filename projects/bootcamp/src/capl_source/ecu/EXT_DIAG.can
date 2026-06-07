@@ -1,0 +1,199 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tExtDiagCycle;
+  int gLastTraceRequestTarget;
+  int gLastTraceRequestSid;
+  int gLastTraceRequestDidHigh;
+  int gLastTraceRequestDidLow;
+  int gLastTraceRequestSourceBus;
+  long gLastTraceRequestCounter;
+  long gLastTraceRequestTimeMs;
+  int gLastTraceResponseTarget;
+  int gLastTraceResponseCode;
+  int gLastTraceResponseData0;
+  int gLastTraceResponseData1;
+  int gLastTraceResponseOk;
+  int gLastTraceResponseSourceBus;
+  long gLastTraceResponseCounter;
+  long gLastTraceResponseTimeMs;
+  int gLastTraceServiceState;
+  int gLastTraceSecurityState;
+  int gLastTraceRouteOwner;
+  int gLastTraceResponseKind;
+  int gLastTraceReasonCode;
+}
+
+void traceExtDiagRequestObservation()
+{
+  int requestTarget;
+  int requestSid;
+  int requestDidHigh;
+  int requestDidLow;
+  int requestSourceBus;
+  long requestCounter;
+  long requestTimeMs;
+
+  requestTarget = clampRange((int)@Diag::LastRequestTarget, 0, 255);
+  requestSid = clampRange((int)@Diag::LastRequestSid, 0, 255);
+  requestDidHigh = clampRange((int)@Diag::LastRequestDidHigh, 0, 255);
+  requestDidLow = clampRange((int)@Diag::LastRequestDidLow, 0, 255);
+  requestSourceBus = clampRange((int)@Diag::LastRequestSourceBus, 0, 255);
+  requestCounter = (long)@Diag::RequestCounter;
+  requestTimeMs = (long)@Diag::LastRequestTimeMs;
+
+  if (requestTarget != gLastTraceRequestTarget ||
+      requestSid != gLastTraceRequestSid ||
+      requestDidHigh != gLastTraceRequestDidHigh ||
+      requestDidLow != gLastTraceRequestDidLow ||
+      requestSourceBus != gLastTraceRequestSourceBus ||
+      requestCounter != gLastTraceRequestCounter ||
+      requestTimeMs != gLastTraceRequestTimeMs)
+  {
+    write("[EXT_DIAG] request target=%d sid=0x%X did=%02X%02X srcBus=%d count=%ld time=%ld",
+          requestTarget,
+          requestSid,
+          requestDidHigh,
+          requestDidLow,
+          requestSourceBus,
+          requestCounter,
+          requestTimeMs);
+    gLastTraceRequestTarget = requestTarget;
+    gLastTraceRequestSid = requestSid;
+    gLastTraceRequestDidHigh = requestDidHigh;
+    gLastTraceRequestDidLow = requestDidLow;
+    gLastTraceRequestSourceBus = requestSourceBus;
+    gLastTraceRequestCounter = requestCounter;
+    gLastTraceRequestTimeMs = requestTimeMs;
+  }
+}
+
+void traceExtDiagResponseObservation()
+{
+  int responseTarget;
+  int responseCode;
+  int responseData0;
+  int responseData1;
+  int responseOk;
+  int responseSourceBus;
+  long responseCounter;
+  long responseTimeMs;
+
+  responseTarget = clampRange((int)@Diag::LastResponseTarget, 0, 255);
+  responseCode = clampRange((int)@Diag::LastResponseCode, 0, 255);
+  responseData0 = clampRange((int)@Diag::LastResponseData0, 0, 255);
+  responseData1 = clampRange((int)@Diag::LastResponseData1, 0, 255);
+  responseOk = clampRange((int)@Diag::LastResponseOk, 0, 255);
+  responseSourceBus = clampRange((int)@Diag::LastResponseSourceBus, 0, 255);
+  responseCounter = (long)@Diag::ResponseCounter;
+  responseTimeMs = (long)@Diag::LastResponseTimeMs;
+
+  if (responseTarget != gLastTraceResponseTarget ||
+      responseCode != gLastTraceResponseCode ||
+      responseData0 != gLastTraceResponseData0 ||
+      responseData1 != gLastTraceResponseData1 ||
+      responseOk != gLastTraceResponseOk ||
+      responseSourceBus != gLastTraceResponseSourceBus ||
+      responseCounter != gLastTraceResponseCounter ||
+      responseTimeMs != gLastTraceResponseTimeMs)
+  {
+    write("[EXT_DIAG] response target=%d code=0x%X data0=0x%X data1=0x%X ok=%d srcBus=%d count=%ld time=%ld",
+          responseTarget,
+          responseCode,
+          responseData0,
+          responseData1,
+          responseOk,
+          responseSourceBus,
+          responseCounter,
+          responseTimeMs);
+    gLastTraceResponseTarget = responseTarget;
+    gLastTraceResponseCode = responseCode;
+    gLastTraceResponseData0 = responseData0;
+    gLastTraceResponseData1 = responseData1;
+    gLastTraceResponseOk = responseOk;
+    gLastTraceResponseSourceBus = responseSourceBus;
+    gLastTraceResponseCounter = responseCounter;
+    gLastTraceResponseTimeMs = responseTimeMs;
+  }
+}
+
+void traceExtDiagVerdictObservation()
+{
+  int serviceState;
+  int securityState;
+  int routeOwner;
+  int responseKind;
+  int reasonCode;
+
+  serviceState = clampRange((int)@Diag::ServiceState, 0, 255);
+  securityState = clampRange((int)@Diag::SecurityState, 0, 255);
+  routeOwner = clampRange((int)@Diag::RouteOwner, 0, 255);
+  responseKind = clampRange((int)@Diag::ResponseKind, 0, 255);
+  reasonCode = clampRange((int)@Diag::ReasonCode, 0, 65535);
+
+  if (serviceState != gLastTraceServiceState ||
+      securityState != gLastTraceSecurityState ||
+      routeOwner != gLastTraceRouteOwner ||
+      responseKind != gLastTraceResponseKind ||
+      reasonCode != gLastTraceReasonCode)
+  {
+    write("[EXT_DIAG] observe service=%d security=%d route=%d resp=%d reason=%d",
+          serviceState,
+          securityState,
+          routeOwner,
+          responseKind,
+          reasonCode);
+    gLastTraceServiceState = serviceState;
+    gLastTraceSecurityState = securityState;
+    gLastTraceRouteOwner = routeOwner;
+    gLastTraceResponseKind = responseKind;
+    gLastTraceReasonCode = reasonCode;
+  }
+}
+
+on start
+{
+  gLastTraceRequestTarget = -1;
+  gLastTraceRequestSid = -1;
+  gLastTraceRequestDidHigh = -1;
+  gLastTraceRequestDidLow = -1;
+  gLastTraceRequestSourceBus = -1;
+  gLastTraceRequestCounter = -1;
+  gLastTraceRequestTimeMs = -1;
+  gLastTraceResponseTarget = -1;
+  gLastTraceResponseCode = -1;
+  gLastTraceResponseData0 = -1;
+  gLastTraceResponseData1 = -1;
+  gLastTraceResponseOk = -1;
+  gLastTraceResponseSourceBus = -1;
+  gLastTraceResponseCounter = -1;
+  gLastTraceResponseTimeMs = -1;
+  gLastTraceServiceState = -1;
+  gLastTraceSecurityState = -1;
+  gLastTraceRouteOwner = -1;
+  gLastTraceResponseKind = -1;
+  gLastTraceReasonCode = -1;
+  write("[EXT_DIAG] start external diagnostic tester skeleton");
+  setTimer(tExtDiagCycle, 100);
+}
+
+on timer tExtDiagCycle
+{
+  /*
+   * EXT_DIAG is intentionally observation-only until the diagnostic matrix
+   * has concrete request/response frames, SID, DID/DTC, and logical addresses.
+   */
+  traceExtDiagRequestObservation();
+  traceExtDiagResponseObservation();
+  traceExtDiagVerdictObservation();
+  setTimer(tExtDiagCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tExtDiagCycle);
+}

@@ -1,0 +1,124 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tTpmsCycle;
+  int gWheelSpdFL;
+  int gWheelSpdFR;
+  int gWheelSpdRL;
+  int gWheelSpdRR;
+  dword gWheelSpeedRxMs;
+  int gLastWheelInputStale;
+  int gLastFl;
+  int gLastFr;
+  int gLastRl;
+  int gLastRr;
+}
+
+void traceTpmsInputHealth(int wheelInputStale)
+{
+  if (wheelInputStale != gLastWheelInputStale)
+  {
+    if (wheelInputStale == 1)
+    {
+      write("[TPMS] wheel-speed input stale");
+    }
+    else
+    {
+      write("[TPMS] wheel-speed input restored");
+    }
+    gLastWheelInputStale = wheelInputStale;
+  }
+}
+
+void publishTireState()
+{
+  message frmTirePressureMsg mTire;
+  int wheelInputStale;
+  int wheelSpdFL;
+  int wheelSpdFR;
+  int wheelSpdRL;
+  int wheelSpdRR;
+  int dropFront;
+  int dropRear;
+
+  wheelInputStale = (ethIsRecentTick(gWheelSpeedRxMs, 300) == 1) ? 0 : 1;
+  traceTpmsInputHealth(wheelInputStale);
+
+  wheelSpdFL = gWheelSpdFL;
+  wheelSpdFR = gWheelSpdFR;
+  wheelSpdRL = gWheelSpdRL;
+  wheelSpdRR = gWheelSpdRR;
+  if (wheelInputStale == 1)
+  {
+    wheelSpdFL = 0;
+    wheelSpdFR = 0;
+    wheelSpdRL = 0;
+    wheelSpdRR = 0;
+  }
+
+  dropFront = (wheelSpdFL + wheelSpdFR) > 220 ? 4 : 0;
+  dropRear = (wheelSpdRL + wheelSpdRR) > 220 ? 4 : 0;
+
+  mTire.TirePressFL = clampRange(232 - dropFront, 0, 255);
+  mTire.TirePressFR = clampRange(231 - dropFront, 0, 255);
+  mTire.TirePressRL = clampRange(229 - dropRear, 0, 255);
+  mTire.TirePressRR = clampRange(228 - dropRear, 0, 255);
+  output(mTire);
+
+  if (mTire.TirePressFL != gLastFl ||
+      mTire.TirePressFR != gLastFr ||
+      mTire.TirePressRL != gLastRl ||
+      mTire.TirePressRR != gLastRr)
+  {
+    write("[TPMS] fl=%d fr=%d rl=%d rr=%d",
+          mTire.TirePressFL,
+          mTire.TirePressFR,
+          mTire.TirePressRL,
+          mTire.TirePressRR);
+    gLastFl = mTire.TirePressFL;
+    gLastFr = mTire.TirePressFR;
+    gLastRl = mTire.TirePressRL;
+    gLastRr = mTire.TirePressRR;
+  }
+}
+
+on start
+{
+  gWheelSpdFL = 0;
+  gWheelSpdFR = 0;
+  gWheelSpdRL = 0;
+  gWheelSpdRR = 0;
+  gWheelSpeedRxMs = 0;
+  gLastWheelInputStale = 0;
+  gLastFl = -1;
+  gLastFr = -1;
+  gLastRl = -1;
+  gLastRr = -1;
+  setTimer(tTpmsCycle, 100);
+  write("[TPMS] start");
+}
+
+on timer tTpmsCycle
+{
+
+  publishTireState();
+  setTimer(tTpmsCycle, 100);
+}
+
+on message frmWheelSpeedMsg
+{
+  gWheelSpdFL = clampRange((int)this.WheelSpdFL, 0, 255);
+  gWheelSpdFR = clampRange((int)this.WheelSpdFR, 0, 255);
+  gWheelSpdRL = clampRange((int)this.WheelSpdRL, 0, 255);
+  gWheelSpdRR = clampRange((int)this.WheelSpdRR, 0, 255);
+  gWheelSpeedRxMs = getSimulationTimeMs();
+}
+
+on stopMeasurement
+{
+  cancelTimer(tTpmsCycle);
+}

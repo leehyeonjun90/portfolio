@@ -1,0 +1,112 @@
+includes
+{
+  #include "..\\common\\CAPL_COMMON.cin"
+}
+
+variables
+{
+  msTimer tInverterCycle;
+  int gMcuState;
+  int gMotorTorqueCmd;
+  long gMotorSpeedRpm;
+  dword gMcuRxMs;
+  int gLastMcuInputStale;
+  int gLastState;
+  int gLastTemp;
+  int gLastVolt;
+}
+
+void traceInverterInputHealth(int mcuInputStale)
+{
+  if (mcuInputStale != gLastMcuInputStale)
+  {
+    if (mcuInputStale == 1)
+    {
+      write("[INVERTER] mcu input stale");
+    }
+    else
+    {
+      write("[INVERTER] mcu input restored");
+    }
+    gLastMcuInputStale = mcuInputStale;
+  }
+}
+
+on start
+{
+  gMcuState = 0;
+  gMotorTorqueCmd = 0;
+  gMotorSpeedRpm = 0;
+  gMcuRxMs = 0;
+  gLastMcuInputStale = 0;
+  gLastState = -1;
+  gLastTemp = -1;
+  gLastVolt = -1;
+  setTimer(tInverterCycle, 100);
+  write("[INVERTER] start");
+}
+
+on message frmMcuStateMsg
+{
+  gMcuState = clampRange((int)this.McuState, 0, 7);
+  gMotorTorqueCmd = clampRange((int)this.MotorTorqueCmd, 0, 255);
+  gMotorSpeedRpm = (long)this.MotorSpeedRpm;
+  gMcuRxMs = getSimulationTimeMs();
+}
+
+on timer tInverterCycle
+{
+  message frmInverterStateMsg mInv;
+  int mcuInputStale;
+  int mcuState;
+  int motorTorqueCmd;
+  long motorSpeedRpm;
+  int inverterState;
+  int invTemp;
+  int dcLinkVolt;
+
+  mcuInputStale = (ethIsRecentTick(gMcuRxMs, 300) == 1) ? 0 : 1;
+  traceInverterInputHealth(mcuInputStale);
+
+  mcuState = gMcuState;
+  motorTorqueCmd = gMotorTorqueCmd;
+  motorSpeedRpm = gMotorSpeedRpm;
+  if (mcuInputStale == 1)
+  {
+    mcuState = 0;
+    motorTorqueCmd = 0;
+    motorSpeedRpm = 0;
+  }
+
+  inverterState = (mcuState >= 2) ? 2 : ((mcuState == 1) ? 1 : 0);
+  invTemp = 40 + (motorTorqueCmd / 4);
+  if (invTemp > 140) invTemp = 140;
+  dcLinkVolt = 110 + clampRange((int)(motorSpeedRpm / 200), 0, 110);
+
+  mInv.InverterState = clampRange(inverterState, 0, 7);
+  mInv.InvTemp = clampRange(invTemp, 0, 255);
+  mInv.DcLinkVolt = clampRange(dcLinkVolt, 0, 255);
+  output(mInv);
+
+  if (mInv.InverterState != gLastState ||
+      mInv.InvTemp != gLastTemp ||
+      mInv.DcLinkVolt != gLastVolt)
+  {
+    write("[INVERTER] state=%d temp=%d dc=%d torque=%d speed=%ld",
+          mInv.InverterState,
+          mInv.InvTemp,
+          mInv.DcLinkVolt,
+          motorTorqueCmd,
+          motorSpeedRpm);
+    gLastState = mInv.InverterState;
+    gLastTemp = mInv.InvTemp;
+    gLastVolt = mInv.DcLinkVolt;
+  }
+
+  setTimer(tInverterCycle, 100);
+}
+
+on stopMeasurement
+{
+  cancelTimer(tInverterCycle);
+}
